@@ -1,7 +1,16 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 func main() {
 	fmt.Println("===HOLD===")
+	workingDir, err := os.Getwd()
+	if err != nil {
+		fmt.Println("Invocation or runtime error: ", err)
+		return
+	}
+	fmt.Println(workingDir)
 }
