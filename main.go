@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	fmt.Println("===HOLD===")
+	fmt.Println("===KEEN===")
 	workingDir, err := os.Getwd()
 	if err != nil {
 		fmt.Println("Invocation or runtime error: ", err)
