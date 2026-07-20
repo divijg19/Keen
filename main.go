@@ -18,7 +18,9 @@ func main() {
 	fmt.Println(workingDir)
 	conf := &fastwalk.Config{}
 	err = fastwalk.Walk(conf, workingDir, func(path string, d fs.DirEntry, err error) error {
-		fmt.Println(path)
+		if d.IsDir() {
+			fmt.Println(path)
+		}
 		return nil
 	})
 	if err != nil {
