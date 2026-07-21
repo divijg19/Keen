@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/charlievieth/fastwalk"
 )
@@ -19,11 +20,22 @@ func main() {
 	conf := &fastwalk.Config{}
 	err = fastwalk.Walk(conf, workingDir, func(path string, d fs.DirEntry, err error) error {
 		if d.IsDir() {
-			fmt.Println(path)
+			if isGitRepo(path) {
+				fmt.Println(path)
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		fmt.Println("Ran into an error, are you sure path is correct?")
 	}
+}
+
+func isGitRepo(path string) bool {
+	gitPath := filepath.Join(path, ".git")
+	_, err := os.Stat(gitPath)
+	if err != nil {
+		return false
+	}
+	return true
 }
