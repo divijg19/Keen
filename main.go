@@ -19,11 +19,13 @@ func main() {
 	fmt.Println(workingDir)
 	conf := &fastwalk.Config{}
 	err = fastwalk.Walk(conf, workingDir, func(path string, d fs.DirEntry, err error) error {
-		if d.IsDir() {
-			if isGitRepo(path) {
-				fmt.Println(path)
-			}
+		if !d.IsDir() {
+			return nil
 		}
+		if !isGitRepo(path) {
+			return nil
+		}
+		fmt.Println(path)
 		return nil
 	})
 	if err != nil {
