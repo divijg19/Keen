@@ -13,12 +13,15 @@ func main() {
 	fmt.Println("===KEEN===")
 	workingDir, err := os.Getwd()
 	if err != nil {
-		fmt.Println("Invocation or runtime error: ", err)
+		fmt.Printf("Invocation or runtime error: %v\n", err)
 		return
 	}
-	fmt.Println(workingDir)
 	conf := &fastwalk.Config{}
 	err = fastwalk.Walk(conf, workingDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			fmt.Printf("Skipping: %s | %v\n", path, err)
+			return nil
+		}
 		if !d.IsDir() {
 			return nil
 		}
@@ -36,8 +39,5 @@ func main() {
 func isGitRepo(path string) bool {
 	gitPath := filepath.Join(path, ".git")
 	_, err := os.Stat(gitPath)
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
