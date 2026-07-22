@@ -32,7 +32,7 @@ func main() {
 		return nil
 	})
 	if err != nil {
-		fmt.Println("Ran into an error, are you sure path is correct?")
+		fmt.Printf("Filesystem traversal failed: %v\n", err)
 	}
 }
 
