@@ -39,6 +39,17 @@ func main() {
 	if err != nil {
 		fmt.Printf("Filesystem traversal failed: %v\n", err)
 	}
+	printRepositories(repositories)
+}
+
+func traversalEntry(path string, d fs.DirEntry, err error) error {
+	return nil
+}
+
+func discoverRepositories() {
+}
+
+func printRepositories(repositories []Repository) {
 	for _, repository := range repositories {
 		fmt.Println(repository.Path)
 	}
