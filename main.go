@@ -13,40 +13,46 @@ func main() {
 	fmt.Println("===KEEN===")
 	workingDir, err := os.Getwd()
 	if err != nil {
-		fmt.Printf("Invocation or runtime error: %v\n", err)
+		fmt.Printf("Invocation or runtime failed: %v\n", err)
 		return
 	}
-	var repositories []Repository
-	conf := &fastwalk.Config{}
-	err = fastwalk.Walk(conf, workingDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			fmt.Printf("Skipping: %s | %v\n", path, err)
-			return nil
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		if !isGitRepo(path) {
-			return nil
-		}
-		repository := Repository{
-			Path: path,
-		}
-
-		repositories = append(repositories, repository)
-		return nil
-	})
+	repositories, err := discoverRepositories(workingDir)
 	if err != nil {
 		fmt.Printf("Filesystem traversal failed: %v\n", err)
 	}
 	printRepositories(repositories)
 }
 
-func traversalEntry(path string, d fs.DirEntry, err error) error {
-	return nil
+func traversalEntry(path string, d fs.DirEntry, err error) (*Repository, error) {
+	if err != nil {
+		fmt.Printf("Skipping: %s | %v\n", path, err)
+		return nil, nil
+	}
+	if !d.IsDir() {
+		return nil, nil
+	}
+	if !isGitRepo(path) {
+		return nil, nil
+	}
+	return &Repository{
+		Path: path,
+	}, nil
 }
 
-func discoverRepositories() {
+func discoverRepositories(root string) ([]Repository, error) {
+	var repositories []Repository
+	conf := &fastwalk.Config{}
+	err := fastwalk.Walk(conf, root, func(path string, d fs.DirEntry, err error) error {
+		repo, err := traversalEntry(path, d, err)
+		if err != nil {
+			return err
+		}
+		if repo != nil {
+			repositories = append(repositories, *repo)
+		}
+		return nil
+	})
+	return repositories, err
 }
 
 func printRepositories(repositories []Repository) {
