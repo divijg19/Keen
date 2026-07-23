@@ -16,6 +16,7 @@ func main() {
 		fmt.Printf("Invocation or runtime error: %v\n", err)
 		return
 	}
+	var repositories []Repository
 	conf := &fastwalk.Config{}
 	err = fastwalk.Walk(conf, workingDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -28,12 +29,23 @@ func main() {
 		if !isGitRepo(path) {
 			return nil
 		}
-		fmt.Println(path)
+		repository := Repository{
+			Path: path,
+		}
+
+		repositories = append(repositories, repository)
 		return nil
 	})
 	if err != nil {
 		fmt.Printf("Filesystem traversal failed: %v\n", err)
 	}
+	for _, repository := range repositories {
+		fmt.Println(repository.Path)
+	}
+}
+
+type Repository struct {
+	Path string
 }
 
 func isGitRepo(path string) bool {
