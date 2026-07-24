@@ -49,6 +49,7 @@ func discoverRepositories(root string) ([]Repository, error) {
 		}
 		if repo != nil {
 			repositories = append(repositories, *repo)
+			return filepath.SkipDir
 		}
 		return nil
 	})
@@ -67,6 +68,9 @@ type Repository struct {
 
 func isGitRepo(path string) bool {
 	gitPath := filepath.Join(path, ".git")
-	_, err := os.Stat(gitPath)
-	return err == nil
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
