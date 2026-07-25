@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charlievieth/fastwalk"
@@ -73,7 +74,6 @@ func enrichRepository(repo *Repository) error {
 	}
 	repo.Dirty = len(output) > 0
 
-	repo.Branch = strings.TrimSpace(string(output))
 	cmd = exec.Command(
 		"git",
 		"-C",
@@ -85,6 +85,30 @@ func enrichRepository(repo *Repository) error {
 	if err != nil {
 		return err
 	}
+	repo.Branch = strings.TrimSpace(string(output))
+
+	cmd = exec.Command(
+		"git",
+		"-C",
+		repo.Path,
+		"rev-list",
+		"--left-right",
+		"--count",
+		"HEAD...@{upstream}",
+	)
+	output, err = cmd.Output()
+	if err != nil {
+		// Repository may not have an upstream configured.
+		repo.Ahead = 0
+		repo.Behind = 0
+		return nil
+	}
+
+	fields := strings.Fields(string(output))
+	if len(fields) == 2 {
+		repo.Ahead, _ = strconv.Atoi(fields[0])
+		repo.Behind, _ = strconv.Atoi(fields[1])
+	}
 	return nil
 }
 
@@ -94,7 +118,7 @@ func printRepositories(repositories []Repository) {
 		if repository.Dirty {
 			status = "dirty"
 		}
-		fmt.Printf("[%s] %s (%s)\n", status, repository.Name, repository.Branch)
+		fmt.Printf("[%s] %s (%s) ↑%d ↓%d\n", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
 	}
 }
 
@@ -103,6 +127,8 @@ type Repository struct {
 	Name   string
 	Branch string
 	Dirty  bool
+	Ahead  int
+	Behind int
 }
 
 func isGitRepo(path string) bool {
