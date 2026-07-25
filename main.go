@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/charlievieth/fastwalk"
@@ -19,6 +20,12 @@ func main() {
 	repositories, err := discoverRepositories(workingDir)
 	if err != nil {
 		fmt.Printf("Filesystem traversal failed: %v\n", err)
+	}
+	for i := range repositories {
+		err := enrichRepository(&repositories[i])
+		if err != nil {
+			fmt.Printf("Failed to inspect %s: %v\n", repositories[i].Path, err)
+		}
 	}
 	printRepositories(repositories)
 }
@@ -56,14 +63,29 @@ func discoverRepositories(root string) ([]Repository, error) {
 	return repositories, err
 }
 
+func enrichRepository(repo *Repository) error {
+	cmd := exec.Command("git", "-C", repo.Path, "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	repo.Dirty = len(output) > 0
+	return nil
+}
+
 func printRepositories(repositories []Repository) {
 	for _, repository := range repositories {
-		fmt.Println(repository.Path)
+		status := "clean"
+		if repository.Dirty {
+			status = "dirty"
+		}
+		fmt.Printf("[%s] %s\n", status, repository.Path)
 	}
 }
 
 type Repository struct {
-	Path string
+	Path  string
+	Dirty bool
 }
 
 func isGitRepo(path string) bool {
