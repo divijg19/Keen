@@ -64,6 +64,7 @@ func discoverRepositories(root string) ([]Repository, error) {
 }
 
 func enrichRepository(repo *Repository) error {
+	repo.Name = filepath.Base(repo.Path)
 	cmd := exec.Command("git", "-C", repo.Path, "status", "--porcelain")
 	output, err := cmd.Output()
 	if err != nil {
@@ -79,12 +80,13 @@ func printRepositories(repositories []Repository) {
 		if repository.Dirty {
 			status = "dirty"
 		}
-		fmt.Printf("[%s] %s\n", status, repository.Path)
+		fmt.Printf("[%s] %s\n", status, repository.Name)
 	}
 }
 
 type Repository struct {
 	Path  string
+	Name  string
 	Dirty bool
 }
 
