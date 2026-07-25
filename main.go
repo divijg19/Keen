@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/charlievieth/fastwalk"
 )
@@ -71,6 +72,19 @@ func enrichRepository(repo *Repository) error {
 		return err
 	}
 	repo.Dirty = len(output) > 0
+
+	repo.Branch = strings.TrimSpace(string(output))
+	cmd = exec.Command(
+		"git",
+		"-C",
+		repo.Path,
+		"branch",
+		"--show-current",
+	)
+	output, err = cmd.Output()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -80,14 +94,15 @@ func printRepositories(repositories []Repository) {
 		if repository.Dirty {
 			status = "dirty"
 		}
-		fmt.Printf("[%s] %s\n", status, repository.Name)
+		fmt.Printf("[%s] %s (%s)\n", status, repository.Name, repository.Branch)
 	}
 }
 
 type Repository struct {
-	Path  string
-	Name  string
-	Dirty bool
+	Path   string
+	Name   string
+	Branch string
+	Dirty  bool
 }
 
 func isGitRepo(path string) bool {
