@@ -101,14 +101,22 @@ func enrichRepository(repo *Repository) error {
 		// Repository may not have an upstream configured.
 		repo.Ahead = 0
 		repo.Behind = 0
-		return nil
+	} else {
+		fields := strings.Fields(string(output))
+		if len(fields) == 2 {
+			repo.Ahead, _ = strconv.Atoi(fields[0])
+			repo.Behind, _ = strconv.Atoi(fields[1])
+		}
 	}
 
-	fields := strings.Fields(string(output))
-	if len(fields) == 2 {
-		repo.Ahead, _ = strconv.Atoi(fields[0])
-		repo.Behind, _ = strconv.Atoi(fields[1])
+	cmd = exec.Command("git", "-C", repo.Path, "log", "-1", "--date=relative", "--pretty=%cd")
+	output, err = cmd.Output()
+	if err != nil {
+		repo.LastCommitTime = "No commits"
+		return nil
 	}
+	repo.LastCommitTime = strings.TrimSpace(string(output))
+
 	return nil
 }
 
@@ -118,17 +126,22 @@ func printRepositories(repositories []Repository) {
 		if repository.Dirty {
 			status = "dirty"
 		}
-		fmt.Printf("[%s] %s (%s) ↑%d ↓%d\n", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
+		fmt.Printf("[%-5s] %-15s (%-12s) ↑%-2d ↓%-2d", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
+		if repository.LastCommitTime != "" {
+			fmt.Printf(" | %s", repository.LastCommitTime)
+		}
+		fmt.Println()
 	}
 }
 
 type Repository struct {
-	Path   string
-	Name   string
-	Branch string
-	Dirty  bool
-	Ahead  int
-	Behind int
+	Path           string
+	Name           string
+	Branch         string
+	Dirty          bool
+	Ahead          int
+	Behind         int
+	LastCommitTime string
 }
 
 func isGitRepo(path string) bool {
