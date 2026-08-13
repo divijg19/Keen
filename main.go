@@ -169,11 +169,15 @@ func printRepositories(repositories []Repository, mode OutputMode) {
 	}
 }
 
-func printRepositoryRow(repository Repository) {
-	status := "clean"
+func repoStatus(repository Repository) string {
 	if repository.Dirty {
-		status = "dirty"
+		return "dirty"
 	}
+	return "clean"
+}
+
+func printRepositoryRow(repository Repository) {
+	status := repoStatus(repository)
 	fmt.Printf("[%-5s] %-15s (%-12s) ↑%-2d ↓%-2d", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
 	if repository.LastCommitTime != "" {
 		fmt.Printf(" | %s", repository.LastCommitTime)
@@ -218,10 +222,7 @@ func printGrouped(repositories []Repository) {
 func printCompact(repositories []Repository) {
 	fmt.Println()
 	for _, repository := range repositories {
-		status := "clean"
-		if repository.Dirty {
-			status = "dirty"
-		}
+		status := repoStatus(repository)
 		fmt.Printf("[%s] %s (%s) ↑%d ↓%d", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
 		if repository.LastCommitTime != "" {
 			fmt.Printf(" | %s", repository.LastCommitTime)
