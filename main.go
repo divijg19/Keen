@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,15 @@ func main() {
 			fmt.Printf("Failed to inspect %s: %v\n", repositories[i].Path, err)
 		}
 	}
+	slices.SortStableFunc(repositories, func(a, b Repository) int {
+		if !a.Dirty && b.Dirty {
+			return -1
+		}
+		if a.Dirty && !b.Dirty {
+			return 1
+		}
+		return 0
+	})
 	printRepositories(repositories)
 }
 
@@ -121,11 +131,22 @@ func enrichRepository(repo *Repository) error {
 }
 
 func printRepositories(repositories []Repository) {
+	fmt.Println()
+	fmt.Println("    Git Status: CLEAN")
+	fmt.Println("---------------------------")
+	printedDirtyHeader := false
 	for _, repository := range repositories {
 		status := "clean"
 		if repository.Dirty {
 			status = "dirty"
 		}
+		if repository.Dirty && !printedDirtyHeader {
+			fmt.Println()
+			fmt.Println("    Git Status: DIRTY")
+			fmt.Println("---------------------------")
+			printedDirtyHeader = true
+		}
+
 		fmt.Printf("[%-5s] %-15s (%-12s) ↑%-2d ↓%-2d", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
 		if repository.LastCommitTime != "" {
 			fmt.Printf(" | %s", repository.LastCommitTime)
