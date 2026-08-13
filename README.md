@@ -1,14 +1,21 @@
 # `Keen`
 
-`Keen` recursively discovers Git repositories under the current working directory and reports their status.
+`Keen` recursively discovers Git repositories under the current working directory and reports their status. The CLI command is `keen`.
+
+## Build & install
+
+```text
+go build -o keen ./cmd/keen
+go install ./cmd/keen
+```
 
 ## Usage
 
 ```text
-Keen [flags]
+keen [flags]
 ```
 
-Run `Keen` from any directory containing Git repositories. Discovered repositories are grouped by working-tree status (clean before dirty) in a stable order.
+Run `keen` from any directory containing Git repositories. Discovered repositories are grouped by working-tree status (clean before dirty) in a stable order.
 
 ## Flags
 
@@ -23,12 +30,12 @@ Filtering and output mode are orthogonal: `--clean`/`--dirty` control *which* re
 
 | Invocation               | Selection | Presentation |
 | ------------------------ | --------- | ------------ |
-| `Keen`                   | all       | grouped      |
-| `Keen --clean`           | clean     | grouped      |
-| `Keen --dirty`           | dirty     | grouped      |
-| `Keen --compact`         | all       | compact      |
-| `Keen --clean --compact` | clean     | compact      |
-| `Keen --dirty --compact` | dirty     | compact      |
+| `keen`                   | all       | grouped      |
+| `keen --clean`           | clean     | grouped      |
+| `keen --dirty`           | dirty     | grouped      |
+| `keen --compact`         | all       | compact      |
+| `keen --clean --compact` | clean     | compact      |
+| `keen --dirty --compact` | dirty     | compact      |
 
 `--clean --dirty` together means all repositories.
 
@@ -48,11 +55,11 @@ Grouped mode prints a `Git Status: CLEAN` / `Git Status: DIRTY` section only whe
 [dirty] project-b       (feature/x   ) ↑1  ↓0  | 5 minutes ago
 ```
 
-If no repositories match, `Keen` prints `No repositories found.`
+If no repositories match, `keen` prints `No repositories found.`
 
-For each repository, `Keen` reports the branch, commits ahead/behind the upstream (`↑n ↓n`), and the relative time of the last commit.
+For each repository, `keen` reports the branch, commits ahead/behind the upstream (`↑n ↓n`), and the relative time of the last commit.
 
-## Known limitations (v0.4.x)
+## Known limitations
 
 - A repository in a detached HEAD state reports an empty branch name; this is expected and not an error.
 - Nested repositories (a repository inside another repository) are not separately reported, since traversal stops at the first discovered repository.
