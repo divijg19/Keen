@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -24,6 +25,10 @@ func main() {
 	if err != nil {
 		fmt.Printf("Filesystem traversal failed: %v\n", err)
 	}
+	var showClean, showDirty bool
+	flag.BoolVar(&showClean, "clean", false, "show only clean repositories")
+	flag.BoolVar(&showDirty, "dirty", false, "show only dirty repositories")
+	flag.Parse()
 	for i := range repositories {
 		err := enrichRepository(&repositories[i])
 		if err != nil {
@@ -39,7 +44,20 @@ func main() {
 		}
 		return 0
 	})
-	printRepositories(repositories)
+
+	var filtered []Repository
+	for _, r := range repositories {
+		if showClean && !r.Dirty {
+			filtered = append(filtered, r)
+		}
+		if showDirty && r.Dirty {
+			filtered = append(filtered, r)
+		}
+	}
+	if !showClean && !showDirty {
+		filtered = repositories
+	}
+	printRepositories(filtered)
 }
 
 func traversalEntry(path string, d fs.DirEntry, err error) (*Repository, error) {
