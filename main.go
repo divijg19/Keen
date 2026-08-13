@@ -15,7 +15,6 @@ import (
 )
 
 func main() {
-	fmt.Println("===KEEN===")
 	workingDir, err := os.Getwd()
 	if err != nil {
 		fmt.Printf("Invocation or runtime failed: %v\n", err)
@@ -26,9 +25,12 @@ func main() {
 		fmt.Printf("Filesystem traversal failed: %v\n", err)
 	}
 	var showClean, showDirty bool
+	var compact bool
 	flag.BoolVar(&showClean, "clean", false, "show only clean repositories")
 	flag.BoolVar(&showDirty, "dirty", false, "show only dirty repositories")
+	flag.BoolVar(&compact, "compact", false, "use compact output")
 	flag.Parse()
+	fmt.Println("===KEEN===")
 	for i := range repositories {
 		err := enrichRepository(&repositories[i])
 		if err != nil {
@@ -57,7 +59,11 @@ func main() {
 	if !showClean && !showDirty {
 		filtered = repositories
 	}
-	printRepositories(filtered)
+	mode := OutputGrouped
+	if compact {
+		mode = OutputCompact
+	}
+	printRepositories(filtered, mode)
 }
 
 func traversalEntry(path string, d fs.DirEntry, err error) (*Repository, error) {
@@ -148,24 +154,75 @@ func enrichRepository(repo *Repository) error {
 	return nil
 }
 
-func printRepositories(repositories []Repository) {
+func printRepositories(repositories []Repository, mode OutputMode) {
+	if len(repositories) == 0 {
+		fmt.Println()
+		fmt.Println("No repositories found.")
+		return
+	}
+
+	switch mode {
+	case OutputCompact:
+		printCompact(repositories)
+	default:
+		printGrouped(repositories)
+	}
+}
+
+func printRepositoryRow(repository Repository) {
+	status := "clean"
+	if repository.Dirty {
+		status = "dirty"
+	}
+	fmt.Printf("[%-5s] %-15s (%-12s) ↑%-2d ↓%-2d", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
+	if repository.LastCommitTime != "" {
+		fmt.Printf(" | %s", repository.LastCommitTime)
+	}
 	fmt.Println()
-	fmt.Println("    Git Status: CLEAN")
-	fmt.Println("---------------------------")
-	printedDirtyHeader := false
+}
+
+func printGrouped(repositories []Repository) {
+	fmt.Println()
+	hasClean := false
+	hasDirty := false
+	for _, repository := range repositories {
+		if repository.Dirty {
+			hasDirty = true
+		} else {
+			hasClean = true
+		}
+	}
+	if hasClean {
+		fmt.Println("    Git Status: CLEAN")
+		fmt.Println("---------------------------")
+		for _, repository := range repositories {
+			if !repository.Dirty {
+				printRepositoryRow(repository)
+			}
+		}
+	}
+	if hasDirty {
+		if hasClean {
+			fmt.Println()
+		}
+		fmt.Println("    Git Status: DIRTY")
+		fmt.Println("---------------------------")
+		for _, repository := range repositories {
+			if repository.Dirty {
+				printRepositoryRow(repository)
+			}
+		}
+	}
+}
+
+func printCompact(repositories []Repository) {
+	fmt.Println()
 	for _, repository := range repositories {
 		status := "clean"
 		if repository.Dirty {
 			status = "dirty"
 		}
-		if repository.Dirty && !printedDirtyHeader {
-			fmt.Println()
-			fmt.Println("    Git Status: DIRTY")
-			fmt.Println("---------------------------")
-			printedDirtyHeader = true
-		}
-
-		fmt.Printf("[%-5s] %-15s (%-12s) ↑%-2d ↓%-2d", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
+		fmt.Printf("[%s] %s (%s) ↑%d ↓%d", status, repository.Name, repository.Branch, repository.Ahead, repository.Behind)
 		if repository.LastCommitTime != "" {
 			fmt.Printf(" | %s", repository.LastCommitTime)
 		}
@@ -182,6 +239,13 @@ type Repository struct {
 	Behind         int
 	LastCommitTime string
 }
+
+type OutputMode int
+
+const (
+	OutputGrouped OutputMode = iota
+	OutputCompact
+)
 
 func isGitRepo(path string) bool {
 	gitPath := filepath.Join(path, ".git")
