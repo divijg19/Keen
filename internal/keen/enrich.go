@@ -1,10 +1,12 @@
 package keen
 
 import (
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // runGit centralizes Git command execution through a single narrow abstraction
@@ -18,9 +20,12 @@ func runGit(dir string, args ...string) (string, error) {
 }
 
 // Enrich populates a repository's Git metadata using separate, intentional Git
-// commands. The four call sites reflect distinct pieces of metadata and are
-// kept separate to ease future metadata additions without expanding Enrich
-// indefinitely.
+// commands. The call sites reflect distinct pieces of metadata and are kept
+// separate to ease future metadata additions without expanding Enrich indefinitely.
+//
+// Invariant: repo.LastCommitAt is zero if and only if the repository has no
+// commits. A malformed machine-readable timestamp is an enrichment error, never
+// a silent downgrade to "no commit".
 func Enrich(repo *Repository) error {
 	repo.Name = filepath.Base(repo.Path)
 
@@ -49,10 +54,24 @@ func Enrich(repo *Repository) error {
 		}
 	}
 
-	output, err = runGit(repo.Path, "log", "-1", "--date=relative", "--pretty=%cd")
-	if err != nil {
+	// Last commit timestamp (machine-readable ISO-8601).
+	output, err = runGit(repo.Path, "log", "-1", "--format=%cI")
+	if err != nil || strings.TrimSpace(output) == "" {
+		// Repository legitimately has no commits.
+		repo.LastCommitAt = time.Time{}
 		repo.LastCommitTime = "No commits"
 		return nil
+	}
+	parsedTime, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(output))
+	if parseErr != nil {
+		return fmt.Errorf("parse last commit time: %w", parseErr)
+	}
+	repo.LastCommitAt = parsedTime
+
+	// Last commit relative date (human-readable presentation).
+	output, err = runGit(repo.Path, "log", "-1", "--date=relative", "--pretty=%cd")
+	if err != nil {
+		return fmt.Errorf("read last commit date: %w", err)
 	}
 	repo.LastCommitTime = strings.TrimSpace(output)
 

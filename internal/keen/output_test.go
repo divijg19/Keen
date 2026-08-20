@@ -41,12 +41,24 @@ func captureOutput(f func()) string {
 }
 
 func TestPrint(t *testing.T) {
-	t.Run("empty output", func(t *testing.T) {
+	t.Run("empty discovery output", func(t *testing.T) {
 		out := captureOutput(func() {
-			Print([]Repository{}, OutputGrouped)
+			Print([]Repository{}, OutputGrouped, 0)
 		})
 		if !strings.Contains(out, "No repositories found.") {
 			t.Errorf("expected 'No repositories found.', got %q", out)
+		}
+	})
+
+	t.Run("empty filtered output when repos discovered", func(t *testing.T) {
+		out := captureOutput(func() {
+			Print([]Repository{}, OutputGrouped, 3)
+		})
+		if !strings.Contains(out, "No repositories match the selected filters.") {
+			t.Errorf("expected 'No repositories match the selected filters.', got %q", out)
+		}
+		if strings.Contains(out, "No repositories found.") {
+			t.Errorf("unexpected 'No repositories found.' when repositories were discovered: %q", out)
 		}
 	})
 
@@ -56,7 +68,7 @@ func TestPrint(t *testing.T) {
 			{Name: "my-dirty", Branch: "dev", Dirty: true, LastCommitTime: "2 hours ago"},
 		}
 		out := captureOutput(func() {
-			Print(repos, OutputGrouped)
+			Print(repos, OutputGrouped, len(repos))
 		})
 		if !strings.Contains(out, "Git Status: CLEAN") {
 			t.Errorf("missing CLEAN header in output: %q", out)
@@ -74,7 +86,7 @@ func TestPrint(t *testing.T) {
 			{Name: "my-clean", Branch: "main", Dirty: false, LastCommitTime: "1 day ago"},
 		}
 		out := captureOutput(func() {
-			Print(repos, OutputGrouped)
+			Print(repos, OutputGrouped, len(repos))
 		})
 		if !strings.Contains(out, "Git Status: CLEAN") {
 			t.Errorf("missing CLEAN header: %q", out)
@@ -90,7 +102,7 @@ func TestPrint(t *testing.T) {
 			{Name: "my-dirty", Branch: "dev", Dirty: true, LastCommitTime: "2 hours ago"},
 		}
 		out := captureOutput(func() {
-			Print(repos, OutputCompact)
+			Print(repos, OutputCompact, len(repos))
 		})
 		if strings.Contains(out, "Git Status: CLEAN") || strings.Contains(out, "Git Status: DIRTY") {
 			t.Errorf("compact output should not contain section headers: %q", out)

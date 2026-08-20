@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/divijg19/Keen/internal/keen"
 )
@@ -22,10 +23,22 @@ func main() {
 	}
 
 	var opts keen.Options
+	var recentFlag string
 	flag.BoolVar(&opts.ShowClean, "clean", false, "show only clean repositories")
 	flag.BoolVar(&opts.ShowDirty, "dirty", false, "show only dirty repositories")
+	flag.StringVar(&recentFlag, "recent", "", "show only repositories with commits within duration (e.g. 30m, 24h, 7d, 2w)")
 	flag.BoolVar(&opts.Compact, "compact", false, "use compact output")
 	flag.Parse()
+
+	if recentFlag != "" {
+		dur, err := keen.ParseRecentDuration(recentFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid --recent duration: %q\n", recentFlag)
+			os.Exit(1)
+		}
+		opts.HasRecent = true
+		opts.RecentAfter = time.Now().Add(-dur)
+	}
 
 	fmt.Println("===KEEN===")
 
@@ -42,5 +55,5 @@ func main() {
 	if opts.Compact {
 		mode = keen.OutputCompact
 	}
-	keen.Print(filtered, mode)
+	keen.Print(filtered, mode, len(repositories))
 }

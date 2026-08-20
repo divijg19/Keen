@@ -10,12 +10,16 @@ func repoStatus(repository Repository) string {
 }
 
 // Print renders repositories according to the selected output mode. An empty
-// result is reported with a minimal message that is distinct from a traversal
-// failure.
-func Print(repositories []Repository, mode OutputMode) {
+// result is reported with a minimal message that distinguishes between zero
+// discovered repositories and zero filter matches.
+func Print(repositories []Repository, mode OutputMode, totalDiscovered int) {
 	if len(repositories) == 0 {
 		fmt.Println()
-		fmt.Println("No repositories found.")
+		if totalDiscovered == 0 {
+			fmt.Println("No repositories found.")
+		} else {
+			fmt.Println("No repositories match the selected filters.")
+		}
 		return
 	}
 	switch mode {
