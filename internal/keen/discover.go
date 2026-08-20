@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/charlievieth/fastwalk"
 )
@@ -37,6 +38,7 @@ func traversalEntry(path string, d fs.DirEntry, err error) (*Repository, error) 
 // found, traversal does not descend into it.
 func Discover(root string) ([]Repository, error) {
 	var repositories []Repository
+	var mu sync.Mutex
 	conf := &fastwalk.Config{}
 	err := fastwalk.Walk(conf, root, func(path string, d fs.DirEntry, err error) error {
 		repo, err := traversalEntry(path, d, err)
@@ -44,7 +46,9 @@ func Discover(root string) ([]Repository, error) {
 			return err
 		}
 		if repo != nil {
+			mu.Lock()
 			repositories = append(repositories, *repo)
+			mu.Unlock()
 			return filepath.SkipDir
 		}
 		return nil
