@@ -17,32 +17,70 @@ func TestSort(t *testing.T) {
 			want: []Repository{},
 		},
 		{
-			name: "single clean",
-			in:   []Repository{{Name: "a", Dirty: false}},
-			want: []Repository{{Name: "a", Dirty: false}},
+			name: "single repository",
+			in:   []Repository{{Name: "a", Path: "/a", Dirty: false}},
+			want: []Repository{{Name: "a", Path: "/a", Dirty: false}},
 		},
 		{
-			name: "single dirty",
-			in:   []Repository{{Name: "a", Dirty: true}},
-			want: []Repository{{Name: "a", Dirty: true}},
-		},
-		{
-			name: "clean before dirty with stability",
+			name: "clean before dirty",
 			in: []Repository{
-				{Name: "dirty-1", Dirty: true},
-				{Name: "clean-1", Dirty: false},
-				{Name: "dirty-2", Dirty: true},
-				{Name: "clean-2", Dirty: false},
-				{Name: "clean-3", Dirty: false},
-				{Name: "dirty-3", Dirty: true},
+				{Name: "Z-Dirty", Path: "/z", Dirty: true},
+				{Name: "A-Clean", Path: "/a", Dirty: false},
 			},
 			want: []Repository{
-				{Name: "clean-1", Dirty: false},
-				{Name: "clean-2", Dirty: false},
-				{Name: "clean-3", Dirty: false},
-				{Name: "dirty-1", Dirty: true},
-				{Name: "dirty-2", Dirty: true},
-				{Name: "dirty-3", Dirty: true},
+				{Name: "A-Clean", Path: "/a", Dirty: false},
+				{Name: "Z-Dirty", Path: "/z", Dirty: true},
+			},
+		},
+		{
+			name: "alphabetical name sorting within groups",
+			in: []Repository{
+				{Name: "Zeta", Path: "/zeta", Dirty: false},
+				{Name: "Alpha", Path: "/alpha", Dirty: false},
+				{Name: "Delta", Path: "/delta", Dirty: false},
+				{Name: "Omega", Path: "/omega", Dirty: true},
+				{Name: "Beta", Path: "/beta", Dirty: true},
+			},
+			want: []Repository{
+				{Name: "Alpha", Path: "/alpha", Dirty: false},
+				{Name: "Delta", Path: "/delta", Dirty: false},
+				{Name: "Zeta", Path: "/zeta", Dirty: false},
+				{Name: "Beta", Path: "/beta", Dirty: true},
+				{Name: "Omega", Path: "/omega", Dirty: true},
+			},
+		},
+		{
+			name: "path tie-breaker when names are equal",
+			in: []Repository{
+				{Name: "Common", Path: "/b-path", Dirty: false},
+				{Name: "Common", Path: "/a-path", Dirty: false},
+				{Name: "Common", Path: "/c-path", Dirty: true},
+				{Name: "Common", Path: "/aa-path", Dirty: true},
+			},
+			want: []Repository{
+				{Name: "Common", Path: "/a-path", Dirty: false},
+				{Name: "Common", Path: "/b-path", Dirty: false},
+				{Name: "Common", Path: "/aa-path", Dirty: true},
+				{Name: "Common", Path: "/c-path", Dirty: true},
+			},
+		},
+		{
+			name: "mixed complete ordering",
+			in: []Repository{
+				{Name: "Z-Dirty", Path: "/z", Dirty: true},
+				{Name: "B-Clean", Path: "/b", Dirty: false},
+				{Name: "A-Dirty", Path: "/a2", Dirty: true},
+				{Name: "A-Clean", Path: "/a1", Dirty: false},
+				{Name: "C-Clean", Path: "/c", Dirty: false},
+				{Name: "C-Dirty", Path: "/c2", Dirty: true},
+			},
+			want: []Repository{
+				{Name: "A-Clean", Path: "/a1", Dirty: false},
+				{Name: "B-Clean", Path: "/b", Dirty: false},
+				{Name: "C-Clean", Path: "/c", Dirty: false},
+				{Name: "A-Dirty", Path: "/a2", Dirty: true},
+				{Name: "C-Dirty", Path: "/c2", Dirty: true},
+				{Name: "Z-Dirty", Path: "/z", Dirty: true},
 			},
 		},
 	}
@@ -56,8 +94,8 @@ func TestSort(t *testing.T) {
 				t.Fatalf("Sort() got len %d, want %d", len(got), len(tt.want))
 			}
 			for i := range got {
-				if got[i].Name != tt.want[i].Name || got[i].Dirty != tt.want[i].Dirty {
-					t.Errorf("Sort() at index %d = %v, want %v", i, got[i], tt.want[i])
+				if got[i].Name != tt.want[i].Name || got[i].Path != tt.want[i].Path || got[i].Dirty != tt.want[i].Dirty {
+					t.Errorf("Sort() at index %d = %+v, want %+v", i, got[i], tt.want[i])
 				}
 			}
 		})

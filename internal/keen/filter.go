@@ -1,18 +1,28 @@
 package keen
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
-// Sort orders repositories stably: clean before dirty, preserving the discovery
-// order within each group.
+// Sort orders repositories deterministically:
+// 1. Clean repositories precede dirty repositories.
+// 2. Within each status group, repositories are ordered alphabetically by Name (ascending).
+// 3. When names are equal, sort by Path (ascending) as a deterministic tie-breaker.
 func Sort(repositories []Repository) {
-	slices.SortStableFunc(repositories, func(a, b Repository) int {
-		if !a.Dirty && b.Dirty {
+	slices.SortFunc(repositories, func(a, b Repository) int {
+		if a.Dirty != b.Dirty {
+			if a.Dirty {
+				return 1
+			}
 			return -1
 		}
-		if a.Dirty && !b.Dirty {
-			return 1
+
+		if n := strings.Compare(a.Name, b.Name); n != 0 {
+			return n
 		}
-		return 0
+
+		return strings.Compare(a.Path, b.Path)
 	})
 }
 
