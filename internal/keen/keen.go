@@ -1,7 +1,9 @@
 package keen
 
+import "time"
+
 // Repository is the central domain model for a discovered Git repository.
-// Its fields are intentionally minimal and stable across the v0.4.x line.
+// Its fields are intentionally minimal and stable across the v0.4.x / v0.5.x line.
 type Repository struct {
 	Path           string
 	Name           string
@@ -9,6 +11,7 @@ type Repository struct {
 	Dirty          bool
 	Ahead          int
 	Behind         int
+	LastCommitAt   time.Time
 	LastCommitTime string
 }
 
@@ -22,7 +25,9 @@ const (
 
 // Options carries the CLI selection and presentation preferences.
 type Options struct {
-	ShowClean bool
-	ShowDirty bool
-	Compact   bool
+	ShowClean   bool
+	ShowDirty   bool
+	HasRecent   bool
+	RecentAfter time.Time
+	Compact     bool
 }
