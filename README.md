@@ -25,9 +25,45 @@ Run `keen` from any directory containing Git repositories. Discovered repositori
 | `--dirty`  | Show only repositories with uncommitted changes.                     |
 | `--recent` | Show only repositories with commits within duration (e.g. 24h, 7d). |
 | `--compact`| Use a compact one-line-per-repository layout.                        |
+| `-r`       | Use the rich textual report.                                         |
+| `-i`       | Open the interactive browser.                                        |
 | `--help`   | Print usage information.                                             |
 
-Filtering and output mode are orthogonal: `--clean`, `--dirty`, and `--recent` control *which* repositories are selected, `--compact` controls *how* they are presented.
+Filtering and presentation mode are orthogonal: `--clean`, `--dirty`, and
+`--recent` control *which* repositories are selected, while the presentation mode
+(`keen`, `-r`, `-i`) controls *how* they are presented. The mode never changes
+selection; the same filters apply and the browser/rich report consume the already
+filtered set.
+
+### Presentation modes
+
+```text
+keen        canonical textual report
+keen -r     rich textual report
+keen -i     interactive browser
+```
+
+`-i` is the permanent interactive entrypoint. The lightweight browser in v0.5.6
+may later be replaced by a full alt-screen TUI without changing the public
+invocation.
+
+### Interactive browser
+
+The browser contains exactly two views:
+
+| View      | Answers                                  | Shows                                                        |
+| --------- | ---------------------------------------- | ------------------------------------------------------------ |
+| Overview  | What needs my attention?                 | status, name, branch, upstream, ahead/behind.                |
+| Activity  | What happened recently?                   | name, short hash, commit subject, relative commit time.      |
+
+Overview shows each repository's branch *and* its upstream (using `↑– ↓–` when no
+upstream is configured). Activity shows the latest commit identity (short hash,
+subject, relative time) and `No commits` for repositories with no history.
+
+Navigate between views with `←`/`→` or `h`/`l`. A view wider than the terminal is
+revealed with a horizontal viewport: scroll it with `Shift+←`/`Shift+→`. Press
+`q` or `Esc` to quit (Ctrl+C also quits). A persistent `‹ VIEW ›  n / 2` indicator
+shows the active view.
 
 ### Filter composition
 
@@ -43,6 +79,10 @@ Filters combine using **AND** semantics:
 | `keen --clean --recent 7d`     | clean AND recent        | grouped      |
 | `keen --compact --recent 7d`   | recent                  | compact      |
 | `keen --clean --dirty`         | all                     | grouped      |
+| `keen -r`                      | all                     | rich         |
+| `keen -r --dirty`              | dirty                   | rich         |
+| `keen -i`                      | all                     | interactive  |
+| `keen -i --recent 7d`          | recent (last 7 days)    | interactive  |
 
 Supported `--recent` duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks).
 

@@ -34,10 +34,20 @@ const (
 )
 
 // Options carries the CLI selection and presentation preferences.
+//
+// Presentation is expressed as three explicit, mutually exclusive modes:
+//   - canonical textual report (default)
+//   - rich textual report (-r)
+//   - interactive browser (-i)
+//
+// Selection flags (ShowClean/ShowDirty/HasRecent) apply identically across all
+// three modes; a presentation mode never alters repository selection.
 type Options struct {
 	ShowClean   bool
 	ShowDirty   bool
 	HasRecent   bool
 	RecentAfter time.Time
 	Compact     bool
+	Rich        bool
+	Interactive bool
 }
