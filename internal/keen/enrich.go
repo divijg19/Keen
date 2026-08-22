@@ -32,12 +32,13 @@ func runGit(dir string, args ...string) (string, error) {
 //	Required facts — failure is an enrichment error:
 //	  working-tree status      (git status --porcelain)
 //	  branch                   (git branch --show-current; detached HEAD → "")
-//	  last-commit timestamp    (git log -1 --format=%cI)
-//	  last-commit date         (git log -1 --date=relative)
+//	  commit identity/timestamp (git log -1 --format=%H/%s/%cI/%cd)
 //
 //	Optional facts — failure degrades gracefully:
 //	  upstream tracking        (git rev-list HEAD...@{upstream})
-//	    absent upstream → Ahead = 0, Behind = 0
+//	    absent upstream → Ahead = 0, Behind = 0, Upstream = ""
+//	  upstream identity        (git rev-parse --abbrev-ref --symbolic-full-name @{upstream})
+//	    absent upstream → Upstream = ""
 func Enrich(repo *Repository) error {
 	repo.Name = filepath.Base(repo.Path)
 
@@ -58,34 +59,42 @@ func Enrich(repo *Repository) error {
 		// Repository may not have an upstream configured.
 		repo.Ahead = 0
 		repo.Behind = 0
+		repo.Upstream = ""
 	} else {
 		fields := strings.Fields(output)
 		if len(fields) == 2 {
 			repo.Ahead, _ = strconv.Atoi(fields[0])
 			repo.Behind, _ = strconv.Atoi(fields[1])
 		}
+		if upstream, uerr := runGit(repo.Path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); uerr == nil {
+			repo.Upstream = strings.TrimSpace(upstream)
+		}
 	}
 
-	// Last commit timestamp (machine-readable ISO-8601).
-	output, err = runGit(repo.Path, "log", "-1", "--format=%cI")
+	// Last commit identity and timestamps, consolidated into a single Git call.
+	// The four logical fields are newline-separated; %s (subject) is a single
+	// line, so splitting on "\n" is unambiguous.
+	output, err = runGit(repo.Path, "log", "-1", "--date=relative", "--format=%H%x0a%s%x0a%cI%x0a%cd")
 	if err != nil || strings.TrimSpace(output) == "" {
 		// Repository legitimately has no commits.
 		repo.LastCommitAt = time.Time{}
 		repo.LastCommitTime = "No commits"
+		repo.LastCommitHash = ""
+		repo.LastCommitSubject = ""
 		return nil
 	}
-	parsedTime, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(output))
+	parts := strings.Split(strings.TrimSpace(output), "\n")
+	if len(parts) < 4 {
+		return fmt.Errorf("unexpected git log output: %q", output)
+	}
+	repo.LastCommitHash = parts[0]
+	repo.LastCommitSubject = parts[1]
+	parsedTime, parseErr := time.Parse(time.RFC3339, parts[2])
 	if parseErr != nil {
 		return fmt.Errorf("parse last commit time: %w", parseErr)
 	}
 	repo.LastCommitAt = parsedTime
-
-	// Last commit relative date (human-readable presentation).
-	output, err = runGit(repo.Path, "log", "-1", "--date=relative", "--pretty=%cd")
-	if err != nil {
-		return fmt.Errorf("read last commit date: %w", err)
-	}
-	repo.LastCommitTime = strings.TrimSpace(output)
+	repo.LastCommitTime = parts[3]
 
 	return nil
 }
