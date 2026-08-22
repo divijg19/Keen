@@ -73,3 +73,51 @@ func TestParseArgsInvalidFlag(t *testing.T) {
 		t.Errorf("unknown flag should error")
 	}
 }
+
+// TestParseArgsRejectsCompactWithModes pins the v0.5.7 grammar rule: --compact
+// is a modifier of the canonical report and must be rejected alongside any
+// presentation mode, before discovery or enrichment runs.
+func TestParseArgsRejectsCompactWithModes(t *testing.T) {
+	for _, args := range [][]string{
+		{"-r", "--compact"},
+		{"--compact", "-r"},
+		{"-i", "--compact"},
+		{"--compact", "-i"},
+	} {
+		if opts, err := parseArgs(args); err == nil {
+			t.Errorf("args %v should error, got opts=%+v", args, opts)
+		}
+	}
+}
+
+// TestParseArgsRejectsCombinedShortFlags pins the existing Go flag-package
+// behavior that v0.5.7 must not alter: combined short flags are not a
+// supported syntax and fail at parse time without producing a report.
+func TestParseArgsRejectsCombinedShortFlags(t *testing.T) {
+	for _, args := range [][]string{{"-ri"}, {"-ir"}} {
+		opts, err := parseArgs(args)
+		if err == nil {
+			t.Errorf("combined short flags %v must not parse, got opts=%+v", args, opts)
+		}
+	}
+}
+
+func TestParseArgsCompactRemainsCanonicalOnly(t *testing.T) {
+	// Canonical combinations stay valid.
+	for _, args := range [][]string{
+		{"--compact"},
+		{"--clean", "--compact"},
+		{"--dirty", "--compact"},
+		{"--recent", "7d", "--compact"},
+	} {
+		if _, err := parseArgs(args); err != nil {
+			t.Errorf("args %v must remain valid: %v", args, err)
+		}
+	}
+	// Selection flags remain valid with modes.
+	for _, mode := range []string{"-r", "-i"} {
+		if _, err := parseArgs([]string{mode, "--dirty"}); err != nil {
+			t.Errorf("%s --dirty must remain valid: %v", mode, err)
+		}
+	}
+}

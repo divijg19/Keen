@@ -24,9 +24,9 @@ Run `keen` from any directory containing Git repositories. Discovered repositori
 | `--clean`  | Show only repositories with a clean worktree.                        |
 | `--dirty`  | Show only repositories with uncommitted changes.                     |
 | `--recent` | Show only repositories with commits within duration (e.g. 24h, 7d). |
-| `--compact`| Use a compact one-line-per-repository layout.                        |
+| `--compact`| Use a compact one-line-per-repository layout (canonical report only).|
 | `-r`       | Use the rich textual report.                                         |
-| `-i`       | Open the interactive browser.                                        |
+| `-i`       | Open the interactive browser (prints a one-shot overview when stdin is not a terminal). |
 | `--help`   | Print usage information.                                             |
 
 Filtering and presentation mode are orthogonal: `--clean`, `--dirty`, and
@@ -34,6 +34,11 @@ Filtering and presentation mode are orthogonal: `--clean`, `--dirty`, and
 (`keen`, `-r`, `-i`) controls *how* they are presented. The mode never changes
 selection; the same filters apply and the browser/rich report consume the already
 filtered set.
+
+Mode flags select the presentation; modifiers refine the canonical report unless
+explicitly supported by another mode. `--compact` belongs to the canonical
+renderer, so `keen -r --compact` and `keen -i --compact` fail with a usage error
+rather than being ignored.
 
 ### Presentation modes
 
@@ -105,6 +110,10 @@ Grouped mode prints a `Git Status: CLEAN` / `Git Status: DIRTY` section only whe
 If no repositories exist, `keen` prints `No repositories found.` If repositories exist but none match active filters, `keen` prints `No repositories match the selected filters.`
 
 For each repository, `keen` reports the branch, the configured upstream (`branch → upstream`), commits ahead/behind that upstream (`↑n ↓n`), the latest commit (seven-character short hash plus subject), and the relative time of that commit.
+
+### Rich report
+
+`keen -r` presents the same facts as an aligned column table (status, name, branch, upstream, ahead, behind, hash, subject, time) for easier comparison across repositories. The table adapts deterministically to the terminal width: columns tighten first, lower-priority columns are dropped next, and on very narrow terminals `keen -r` renders the canonical grouped report instead. Rendering is deterministic — the same repository state at the same width always produces identical output.
 
 ## Known limitations
 

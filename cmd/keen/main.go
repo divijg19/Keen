@@ -23,15 +23,23 @@ func parseArgs(args []string) (keen.Options, error) {
 	fs.BoolVar(&opts.ShowClean, "clean", false, "show only clean repositories")
 	fs.BoolVar(&opts.ShowDirty, "dirty", false, "show only dirty repositories")
 	fs.StringVar(&recentFlag, "recent", "", "show only repositories with commits within duration (e.g. 30m, 24h, 7d)")
-	fs.BoolVar(&opts.Compact, "compact", false, "use compact output")
+	fs.BoolVar(&opts.Compact, "compact", false, "use compact output (canonical report only)")
 	fs.BoolVar(&opts.Rich, "r", false, "use the rich textual report")
-	fs.BoolVar(&opts.Interactive, "i", false, "open the interactive browser")
+	fs.BoolVar(&opts.Interactive, "i", false, "open the interactive browser (prints a one-shot overview when stdin is not a terminal)")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
 
+	// Mode flags select the presentation; modifiers refine the canonical
+	// report unless explicitly supported by another mode. --compact belongs
+	// to the canonical renderer only, so these combinations are invalid.
 	if opts.Rich && opts.Interactive {
 		err := fmt.Errorf("cannot combine -r (rich) and -i (interactive)")
+		fmt.Fprintf(os.Stderr, "keen: %v\n", err)
+		return opts, err
+	}
+	if opts.Compact && (opts.Rich || opts.Interactive) {
+		err := fmt.Errorf("--compact applies only to the canonical report (not valid with -r or -i)")
 		fmt.Fprintf(os.Stderr, "keen: %v\n", err)
 		return opts, err
 	}
