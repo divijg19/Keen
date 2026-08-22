@@ -27,69 +27,209 @@ func richUpstream(repo Repository) string {
 // PrintRich renders a dense, columnar textual report. It presents the same
 // information semantics used by the interactive views (status, name, branch,
 // upstream, ahead/behind, short hash, subject, relative commit time) as aligned
-// columns rather than prose. Column widths adapt to the terminal width, but the
-// columns themselves never change meaning; over-wide cells are deterministically
-// truncated instead of re-flowed.
+// columns rather than prose. The layout adapts deterministically to the
+// terminal width: below the point where a coherent table is impossible, it
+// degrades silently to the canonical grouped report.
 func PrintRich(repositories []Repository, totalDiscovered int) {
 	width := terminalWidth()
 	fmt.Print(renderRich(repositories, totalDiscovered, width))
 }
 
+// richColumn describes one column of the rich table: its header label, its
+// rendered width, whether its values are right-aligned, and whether it may
+// absorb leftover terminal width. Columns are always held in priority order
+// (STATUS through TIME) and width adaptation only ever removes trailing
+// columns, so the number of separators between columns is always
+// len(columns) - 1.
+type richColumn struct {
+	header string
+	width  int
+	right  bool
+	flex   bool
+}
+
+const (
+	richIndent = "    "
+
+	// Fixed widths for facts that do not benefit from stretching.
+	statusColWidth = 7
+	aheadColWidth  = 5
+	behindColWidth = 6
+	hashColWidth   = 7
+	timeColWidth   = 12
+
+	// Generous variable floors used by the wide tier.
+	wideNameFloor     = 12
+	wideBranchFloor   = 10
+	wideUpstreamFloor = 12
+	wideSubjectFloor  = 20
+
+	// Tightened variable floors that keep all nine columns viable below the
+	// wide threshold.
+	tightNameFloor     = 6
+	tightBranchFloor   = 4 // e.g. "main"
+	tightUpstreamFloor = 5
+	tightSubjectFloor  = 6
+
+	// richWideMinWidth is the smallest CONTENT budget where every variable
+	// column receives at least its generous floor, measured from this
+	// renderer's own arithmetic: 37 fixed + 8 separators + 54 floors = 99.
+	// Callers pass width minus the four-space report indent.
+	richWideMinWidth = 99
+
+	// richTableMinWidth is the smallest CONTENT budget where any coherent
+	// rich table remains possible (identity, branch, and the atomic sync
+	// pair). Below it keen -r renders the canonical grouped report instead:
+	// a successful, silent degradation — stdout stays clean and stderr stays
+	// reserved for genuine diagnostics. Callers pass width minus the
+	// four-space report indent.
+	richTableMinWidth = 46
+)
+
 func renderRich(repositories []Repository, totalDiscovered, width int) string {
 	if len(repositories) == 0 {
 		return "\n" + emptyMessage(totalDiscovered) + "\n"
 	}
-
-	const (
-		statusW = 7
-		aheadW  = 5
-		behindW = 6
-		hashW   = 7
-		timeW   = 12
-	)
-	const gaps = 8
-	reserved := statusW + aheadW + behindW + hashW + timeW + gaps
-	avail := width - reserved
-	nameMin, branchMin, upstreamMin, subjectMin := 12, 10, 12, 20
-	minTotal := nameMin + branchMin + upstreamMin + subjectMin
-
-	var nameW, branchW, upstreamW, subjectW int
-	if avail < minTotal {
-		nameW, branchW, upstreamW, subjectW = nameMin, branchMin, upstreamMin, subjectMin
-	} else {
-		nameW = max(nameMin, avail*25/100)
-		branchW = max(branchMin, avail*20/100)
-		upstreamW = max(upstreamMin, avail*25/100)
-		subjectW = max(subjectMin, avail*30/100)
+	cols := richLayout(width - len([]rune(richIndent)))
+	if cols == nil {
+		return renderGrouped(repositories)
 	}
-
-	var sb strings.Builder
-	sb.WriteString("\n")
-	writeGroup := func(title string, dirty bool) {
-		var rows []string
-		for _, r := range repositories {
-			if r.Dirty == dirty {
-				rows = append(rows, richRow(r, statusW, nameW, branchW, upstreamW, aheadW, behindW, hashW, subjectW, timeW))
-			}
-		}
-		if len(rows) == 0 {
-			return
-		}
-		rule := strings.Repeat("-", statusW+nameW+branchW+upstreamW+aheadW+behindW+hashW+subjectW+timeW+gaps)
-		sb.WriteString("    Git Status: " + title + "\n")
-		sb.WriteString("    " + rule + "\n")
-		sb.WriteString("    " + richHeader(statusW, nameW, branchW, upstreamW, aheadW, behindW, hashW, subjectW, timeW) + "\n")
-		for _, row := range rows {
-			sb.WriteString("    " + row + "\n")
-		}
-		sb.WriteString("\n")
-	}
-	writeGroup("CLEAN", false)
-	writeGroup("DIRTY", true)
-	return sb.String()
+	return "\n" + richTable(repositories, cols)
 }
 
-func richRow(r Repository, statusW, nameW, branchW, upstreamW, aheadW, behindW, hashW, subjectW, timeW int) string {
+// richLayout selects the active column set for the requested width. It
+// returns nil when no rich table can fit, which sends the caller to the
+// canonical fallback. Thresholds emerge from the renderer's arithmetic and
+// are pinned by the width-matrix tests rather than frozen arbitrarily.
+func richLayout(width int) []richColumn {
+	if width >= richWideMinWidth {
+		cols := richWideLayout(width)
+		richDistributeSlack(cols, width)
+		return cols
+	}
+	if width < richTableMinWidth {
+		return nil
+	}
+	cols := richTightLayout()
+	for richTableWidth(cols) > width {
+		next, ok := richDropExpendable(cols)
+		if !ok {
+			break
+		}
+		cols = next
+	}
+	if richTableWidth(cols) > width {
+		return nil
+	}
+	richDistributeSlack(cols, width)
+	return cols
+}
+
+// richWideLayout allocates variable columns proportionally, exactly as the
+// v0.5.6 renderer did above its viability floor.
+func richWideLayout(width int) []richColumn {
+	variables := width - (statusColWidth + aheadColWidth + behindColWidth + hashColWidth + timeColWidth + 8)
+	name := max(wideNameFloor, variables*25/100)
+	branch := max(wideBranchFloor, variables*20/100)
+	upstream := max(wideUpstreamFloor, variables*25/100)
+	subject := max(wideSubjectFloor, variables*30/100)
+	// In the band just above the wide threshold the generous subject floor
+	// exceeds its proportional share; SUBJECT is the lowest-priority
+	// flexible column, so it absorbs the difference and keeps the row within
+	// budget. richDistributeSlack widens columns back out to the exact
+	// terminal width afterwards.
+	if overflow := name + branch + upstream + subject - variables; overflow > 0 {
+		subject -= overflow
+	}
+	return []richColumn{
+		{"STATUS", statusColWidth, false, false},
+		{"NAME", name, false, true},
+		{"BRANCH", branch, false, true},
+		{"UPSTREAM", upstream, false, true},
+		{"AHEAD", aheadColWidth, true, false},
+		{"BEHIND", behindColWidth, true, false},
+		{"HASH", hashColWidth, false, false},
+		{"SUBJECT", subject, false, true},
+		{"TIME", timeColWidth, false, false},
+	}
+}
+
+// richTightLayout is the full nine-column table using tightened floors; it
+// is the starting point for width adaptation below the wide threshold
+// (measured requirement: 58 cells + 8 separators = 66 columns).
+func richTightLayout() []richColumn {
+	return []richColumn{
+		{"STATUS", statusColWidth, false, false},
+		{"NAME", tightNameFloor, false, true},
+		{"BRANCH", tightBranchFloor, false, true},
+		{"UPSTREAM", tightUpstreamFloor, false, true},
+		{"AHEAD", aheadColWidth, true, false},
+		{"BEHIND", behindColWidth, true, false},
+		{"HASH", hashColWidth, false, false},
+		{"SUBJECT", tightSubjectFloor, false, true},
+		{"TIME", timeColWidth, false, false},
+	}
+}
+
+// richDropExpendable removes the lowest-priority trailing column according to
+// the information hierarchy: TIME first, then SUBJECT, then the AHEAD/BEHIND
+// synchronization pair atomically (never half a divergence fact), then HASH,
+// UPSTREAM, and BRANCH. STATUS and NAME are never dropped. The boolean
+// reports whether anything was removed.
+func richDropExpendable(cols []richColumn) ([]richColumn, bool) {
+	n := len(cols)
+	switch {
+	case n > 8: // TIME
+		return cols[:n-1], true
+	case n > 7: // SUBJECT
+		return cols[:n-1], true
+	case n > 5: // AHEAD+BEHIND atomically
+		return cols[:n-2], true
+	case n > 3: // HASH, then UPSTREAM, then BRANCH
+		return cols[:n-1], true
+	}
+	return cols, false
+}
+
+// richTableWidth computes the rendered line length of a table laid out with
+// cols: one character of separation between adjacent columns. Deriving the
+// gap count from the column count keeps reduced tables honest after column
+// removal.
+func richTableWidth(cols []richColumn) int {
+	width := len(cols) - 1
+	for _, c := range cols {
+		width += c.width
+	}
+	return width
+}
+
+// richDistributeSlack widens flexible columns until the table spans exactly
+// width, cycling left-to-right so the result is deterministic. Fixed-width
+// facts do not stretch.
+func richDistributeSlack(cols []richColumn, width int) {
+	extra := width - richTableWidth(cols)
+	for extra > 0 {
+		progressed := false
+		for i := range cols {
+			if extra == 0 {
+				break
+			}
+			if cols[i].flex {
+				cols[i].width++
+				extra--
+				progressed = true
+			}
+		}
+		if !progressed {
+			return
+		}
+	}
+}
+
+// richValues returns a repository's nine display values in canonical column
+// order. Positional pairing with a prefix of that order is what allows
+// trailing-column removal without any lookup structure.
+func richValues(r Repository) []string {
 	var ahead, behind string
 	if r.Upstream == "" {
 		ahead, behind = "–", "–"
@@ -100,7 +240,7 @@ func richRow(r Repository, statusW, nameW, branchW, upstreamW, aheadW, behindW, 
 	if hash == "" {
 		hash = "—"
 	}
-	subject := truncate(r.LastCommitSubject, subjectW)
+	subject := r.LastCommitSubject
 	if r.LastCommitHash == "" {
 		subject = "—"
 	}
@@ -108,31 +248,66 @@ func richRow(r Repository, statusW, nameW, branchW, upstreamW, aheadW, behindW, 
 	if time == "" {
 		time = "—"
 	}
-	return fmt.Sprintf("%-*s %-*s %-*s %-*s %*s %*s %-*s %-*s %-*s",
-		statusW, repoStatus(r),
-		nameW, truncate(r.Name, nameW),
-		branchW, truncate(richBranch(r), branchW),
-		upstreamW, truncate(richUpstream(r), upstreamW),
-		aheadW, ahead,
-		behindW, behind,
-		hashW, hash,
-		subjectW, subject,
-		timeW, time,
-	)
+	return []string{
+		repoStatus(r),
+		r.Name,
+		richBranch(r),
+		richUpstream(r),
+		ahead,
+		behind,
+		hash,
+		subject,
+		time,
+	}
 }
 
-func richHeader(statusW, nameW, branchW, upstreamW, aheadW, behindW, hashW, subjectW, timeW int) string {
-	return fmt.Sprintf("%-*s %-*s %-*s %-*s %*s %*s %-*s %-*s %-*s",
-		statusW, "STATUS",
-		nameW, "NAME",
-		branchW, "BRANCH",
-		upstreamW, "UPSTREAM",
-		aheadW, "AHEAD",
-		behindW, "BEHIND",
-		hashW, "HASH",
-		subjectW, "SUBJECT",
-		timeW, "TIME",
-	)
+// fit truncates text to the column width and pads it to exactly that width.
+func (c richColumn) fit(text string) string {
+	text = truncate(text, c.width)
+	if c.right {
+		return fmt.Sprintf("%*s", c.width, text)
+	}
+	return fmt.Sprintf("%-*s", c.width, text)
+}
+
+func richTable(repositories []Repository, cols []richColumn) string {
+	headers := make([]string, len(cols))
+	for i := range cols {
+		headers[i] = cols[i].fit(cols[i].header)
+	}
+	headerLine := strings.Join(headers, " ")
+	rule := strings.Repeat("-", richTableWidth(cols))
+
+	var sb strings.Builder
+	writeGroup := func(title string, dirty bool) {
+		var rows []string
+		for _, r := range repositories {
+			if r.Dirty == dirty {
+				rows = append(rows, richRenderRow(richValues(r), cols))
+			}
+		}
+		if len(rows) == 0 {
+			return
+		}
+		sb.WriteString(richIndent + "Git Status: " + title + "\n")
+		sb.WriteString(richIndent + rule + "\n")
+		sb.WriteString(richIndent + headerLine + "\n")
+		for _, row := range rows {
+			sb.WriteString(richIndent + row + "\n")
+		}
+		sb.WriteString("\n")
+	}
+	writeGroup("CLEAN", false)
+	writeGroup("DIRTY", true)
+	return sb.String()
+}
+
+func richRenderRow(values []string, cols []richColumn) string {
+	parts := make([]string, len(cols))
+	for i := range cols {
+		parts[i] = cols[i].fit(values[i])
+	}
+	return strings.Join(parts, " ")
 }
 
 func repoStatus(repository Repository) string {
@@ -208,20 +383,25 @@ func Print(repositories []Repository, mode OutputMode, totalDiscovered int) {
 	}
 }
 
-func printRepositoryRow(repository Repository) {
+// repositoryRow renders one canonical row as a string.
+func repositoryRow(repository Repository) string {
 	status := repoStatus(repository)
-	fmt.Printf("[%-5s] %-15s (%-22s) %s", status, repository.Name, branchLabel(repository), aheadBehindLabel(repository))
+	row := fmt.Sprintf("[%-5s] %-15s (%-22s) %s", status, repository.Name, branchLabel(repository), aheadBehindLabel(repository))
 	if cl := commitLabel(repository); cl != "" {
-		fmt.Printf(" | %s", cl)
+		row += " | " + cl
 	}
 	if repository.LastCommitTime != "" {
-		fmt.Printf(" | %s", repository.LastCommitTime)
+		row += " | " + repository.LastCommitTime
 	}
-	fmt.Println()
+	return row + "\n"
 }
 
-func printGrouped(repositories []Repository) {
-	fmt.Println()
+// renderGrouped renders the canonical grouped report as a string. Both the
+// default presentation and the very-narrow rich fallback use exactly this
+// path, so identical repository sets always produce byte-identical output.
+func renderGrouped(repositories []Repository) string {
+	var sb strings.Builder
+	sb.WriteString("\n")
 	hasClean := false
 	hasDirty := false
 	for _, repository := range repositories {
@@ -232,26 +412,31 @@ func printGrouped(repositories []Repository) {
 		}
 	}
 	if hasClean {
-		fmt.Println("    Git Status: CLEAN")
-		fmt.Println("---------------------------")
+		sb.WriteString("    Git Status: CLEAN\n")
+		sb.WriteString("---------------------------\n")
 		for _, repository := range repositories {
 			if !repository.Dirty {
-				printRepositoryRow(repository)
+				sb.WriteString(repositoryRow(repository))
 			}
 		}
 	}
 	if hasDirty {
 		if hasClean {
-			fmt.Println()
+			sb.WriteString("\n")
 		}
-		fmt.Println("    Git Status: DIRTY")
-		fmt.Println("---------------------------")
+		sb.WriteString("    Git Status: DIRTY\n")
+		sb.WriteString("---------------------------\n")
 		for _, repository := range repositories {
 			if repository.Dirty {
-				printRepositoryRow(repository)
+				sb.WriteString(repositoryRow(repository))
 			}
 		}
 	}
+	return sb.String()
+}
+
+func printGrouped(repositories []Repository) {
+	fmt.Print(renderGrouped(repositories))
 }
 
 func printCompact(repositories []Repository) {
