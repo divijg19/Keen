@@ -89,16 +89,19 @@ func main() {
 
 	keen.Sort(repositories)
 	filtered := keen.Filter(repositories, opts)
+	// Presentation boundary: display identities are resolved once, against
+	// the filtered set, so all three modes consume identical identities.
+	presented := keen.ResolveDisplayIdentities(filtered)
 
 	if opts.Interactive {
-		keen.Browse(filtered, len(repositories))
+		keen.Browse(presented, len(repositories))
 		return
 	}
 
 	fmt.Println("===KEEN===")
 
 	if opts.Rich {
-		keen.PrintRich(filtered, len(repositories))
+		keen.PrintRich(presented, len(repositories))
 		return
 	}
 
@@ -106,5 +109,5 @@ func main() {
 	if opts.Compact {
 		mode = keen.OutputCompact
 	}
-	keen.Print(filtered, mode, len(repositories))
+	keen.Print(presented, mode, len(repositories))
 }
