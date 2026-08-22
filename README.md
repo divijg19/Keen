@@ -55,19 +55,19 @@ Grouped mode prints a `Git Status: CLEAN` / `Git Status: DIRTY` section only whe
 
     Git Status: CLEAN
 ---------------------------
-[clean] project-a       (main        ) ↑0  ↓0  | 2 days ago
+[clean] project-a       (main → origin/main) ↑0 ↓0  | 4e02b68 add temporal repository filtering | 2 days ago
 
     Git Status: DIRTY
 ---------------------------
-[dirty] project-b       (feature/x   ) ↑1  ↓0  | 5 minutes ago
+[dirty] project-b       (feature/x → origin/feature/x) ↑1 ↓0  | a1b2c3d fix parser panic | 5 minutes ago
 ```
 
 If no repositories exist, `keen` prints `No repositories found.` If repositories exist but none match active filters, `keen` prints `No repositories match the selected filters.`
 
-For each repository, `keen` reports the branch, commits ahead/behind the upstream (`↑n ↓n`), and the relative time of the last commit.
+For each repository, `keen` reports the branch, the configured upstream (`branch → upstream`), commits ahead/behind that upstream (`↑n ↓n`), the latest commit (seven-character short hash plus subject), and the relative time of that commit.
 
 ## Known limitations
 
-- A repository in a detached HEAD state reports an empty branch name; this is expected and not an error.
+- A repository in a detached HEAD state reports `detached` as its branch; this is expected and not an error.
 - Nested repositories (a repository inside another repository) are not separately reported, since traversal stops at the first discovered repository.
-- Repositories without an upstream report `↑0 ↓0`; repositories with no commits report `No commits`.
+- Repositories without an upstream report `↑– ↓–` (a non-numeric marker) so that "0/0" is not mistaken for a synchronized state; the configured upstream, when present, is shown as `branch → upstream`. Repositories with no commits report `No commits`.

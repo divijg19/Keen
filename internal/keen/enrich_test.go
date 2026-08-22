@@ -73,6 +73,35 @@ func TestEnrich(t *testing.T) {
 		}
 	})
 
+	t.Run("committed repository has hash and subject matching git HEAD", func(t *testing.T) {
+		repoDir := t.TempDir()
+		initTestGitRepo(t, repoDir)
+
+		if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("data"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGitCommand(t, repoDir, "add", "file.txt")
+		runGitCommand(t, repoDir, "commit", "-m", "implement repository enrichment")
+
+		wantHash := strings.TrimSpace(runGitOutput(t, repoDir, "rev-parse", "HEAD"))
+		wantSubject := strings.TrimSpace(runGitOutput(t, repoDir, "log", "-1", "--format=%s"))
+
+		repo := Repository{Path: repoDir}
+		if err := Enrich(&repo); err != nil {
+			t.Fatalf("Enrich() error = %v", err)
+		}
+
+		if repo.LastCommitHash != wantHash {
+			t.Errorf("LastCommitHash = %q, want %q", repo.LastCommitHash, wantHash)
+		}
+		if repo.LastCommitSubject != wantSubject {
+			t.Errorf("LastCommitSubject = %q, want %q", repo.LastCommitSubject, wantSubject)
+		}
+		if repo.Upstream != "" {
+			t.Errorf("expected empty Upstream for local repo without remote, got %q", repo.Upstream)
+		}
+	})
+
 	t.Run("repository with no commits", func(t *testing.T) {
 		repoDir := t.TempDir()
 		initTestGitRepo(t, repoDir)
@@ -87,6 +116,12 @@ func TestEnrich(t *testing.T) {
 		}
 		if !repo.LastCommitAt.IsZero() {
 			t.Errorf("expected LastCommitAt.IsZero() = true for repo with no commits, got %v", repo.LastCommitAt)
+		}
+		if repo.LastCommitHash != "" {
+			t.Errorf("expected empty LastCommitHash for repo with no commits, got %q", repo.LastCommitHash)
+		}
+		if repo.LastCommitSubject != "" {
+			t.Errorf("expected empty LastCommitSubject for repo with no commits, got %q", repo.LastCommitSubject)
 		}
 	})
 
@@ -107,6 +142,9 @@ func TestEnrich(t *testing.T) {
 
 		if repo.Ahead != 0 || repo.Behind != 0 {
 			t.Errorf("expected Ahead=0, Behind=0 without upstream, got Ahead=%d, Behind=%d", repo.Ahead, repo.Behind)
+		}
+		if repo.Upstream != "" {
+			t.Errorf("expected empty Upstream without upstream, got %q", repo.Upstream)
 		}
 		if repo.LastCommitAt.IsZero() {
 			t.Errorf("expected LastCommitAt to be non-zero for repo without upstream")
@@ -222,6 +260,9 @@ func TestEnrich(t *testing.T) {
 
 		if repo.Ahead <= 0 || repo.Behind <= 0 {
 			t.Errorf("expected diverged repository (Ahead > 0 && Behind > 0), got Ahead=%d Behind=%d", repo.Ahead, repo.Behind)
+		}
+		if repo.Upstream != "origin/main" {
+			t.Errorf("expected Upstream = %q, got %q", "origin/main", repo.Upstream)
 		}
 	})
 }
