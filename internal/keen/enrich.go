@@ -26,6 +26,18 @@ func runGit(dir string, args ...string) (string, error) {
 // Invariant: repo.LastCommitAt is zero if and only if the repository has no
 // commits. A malformed machine-readable timestamp is an enrichment error, never
 // a silent downgrade to "no commit".
+//
+// Git fact taxonomy:
+//
+//	Required facts — failure is an enrichment error:
+//	  working-tree status      (git status --porcelain)
+//	  branch                   (git branch --show-current; detached HEAD → "")
+//	  last-commit timestamp    (git log -1 --format=%cI)
+//	  last-commit date         (git log -1 --date=relative)
+//
+//	Optional facts — failure degrades gracefully:
+//	  upstream tracking        (git rev-list HEAD...@{upstream})
+//	    absent upstream → Ahead = 0, Behind = 0
 func Enrich(repo *Repository) error {
 	repo.Name = filepath.Base(repo.Path)
 
