@@ -146,6 +146,84 @@ func TestEnrich(t *testing.T) {
 			t.Errorf("LastCommitAt = %v, want git commit timestamp %v", repo.LastCommitAt, parsedWant)
 		}
 	})
+
+	t.Run("detached HEAD reports empty branch", func(t *testing.T) {
+		repoDir := t.TempDir()
+		initTestGitRepo(t, repoDir)
+
+		if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("data"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGitCommand(t, repoDir, "add", "file.txt")
+		runGitCommand(t, repoDir, "commit", "-m", "commit")
+
+		hash := strings.TrimSpace(runGitOutput(t, repoDir, "rev-parse", "HEAD"))
+		runGitCommand(t, repoDir, "checkout", "--detach", hash)
+
+		repo := Repository{Path: repoDir}
+		if err := Enrich(&repo); err != nil {
+			t.Fatalf("Enrich() error = %v", err)
+		}
+
+		if repo.Branch != "" {
+			t.Errorf("expected detached HEAD to report empty Branch, got %q", repo.Branch)
+		}
+		if repo.Name != filepath.Base(repoDir) {
+			t.Errorf("expected Name = %q, got %q", filepath.Base(repoDir), repo.Name)
+		}
+		if repo.Dirty {
+			t.Errorf("expected detached HEAD repository to be clean, got Dirty = true")
+		}
+	})
+
+	t.Run("diverged repository parses ahead and behind", func(t *testing.T) {
+		bare := t.TempDir()
+		runGitCommand(t, bare, "init", "--bare", "-q")
+
+		work := t.TempDir()
+		runGitCommand(t, work, "init", "-q")
+		runGitCommand(t, work, "config", "user.email", "test@keen.test")
+		runGitCommand(t, work, "config", "user.name", "Keen Test")
+		if err := os.WriteFile(filepath.Join(work, "base.txt"), []byte("base"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGitCommand(t, work, "add", "base.txt")
+		runGitCommand(t, work, "commit", "-m", "base")
+		runGitCommand(t, work, "branch", "-M", "main")
+		runGitCommand(t, work, "remote", "add", "origin", bare)
+		runGitCommand(t, work, "push", "-q", "-u", "origin", "main")
+
+		// A second clone advances the remote so that work is behind.
+		peer := t.TempDir()
+		runGitCommand(t, peer, "clone", "-q", bare, ".")
+		runGitCommand(t, peer, "config", "user.email", "test@keen.test")
+		runGitCommand(t, peer, "config", "user.name", "Keen Test")
+		if err := os.WriteFile(filepath.Join(peer, "remote.txt"), []byte("remote"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGitCommand(t, peer, "add", "remote.txt")
+		runGitCommand(t, peer, "commit", "-m", "remote-only")
+		runGitCommand(t, peer, "push", "-q", "origin", "main")
+
+		// Refresh work's remote-tracking ref so @{upstream} reflects the peer push.
+		runGitCommand(t, work, "fetch", "-q", "origin")
+
+		// work commits locally without pulling, so it is ahead AND behind.
+		if err := os.WriteFile(filepath.Join(work, "local.txt"), []byte("local"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGitCommand(t, work, "add", "local.txt")
+		runGitCommand(t, work, "commit", "-m", "local-only")
+
+		repo := Repository{Path: work}
+		if err := Enrich(&repo); err != nil {
+			t.Fatalf("Enrich() error = %v", err)
+		}
+
+		if repo.Ahead <= 0 || repo.Behind <= 0 {
+			t.Errorf("expected diverged repository (Ahead > 0 && Behind > 0), got Ahead=%d Behind=%d", repo.Ahead, repo.Behind)
+		}
+	})
 }
 
 func initTestGitRepo(t *testing.T, dir string) {

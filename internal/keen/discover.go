@@ -22,7 +22,8 @@ func isGitRepo(path string) bool {
 
 func traversalEntry(path string, d fs.DirEntry, err error) (*Repository, error) {
 	if err != nil {
-		fmt.Printf("Skipping: %s | %v\n", path, err)
+		// Diagnostics belong on stderr; stdout is reserved for product output.
+		fmt.Fprintf(os.Stderr, "Skipping: %s | %v\n", path, err)
 		return nil, nil
 	}
 	if !d.IsDir() {

@@ -12,13 +12,13 @@ import (
 func main() {
 	workingDir, err := os.Getwd()
 	if err != nil {
-		fmt.Printf("Invocation or runtime failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Invocation or runtime failed: %v\n", err)
 		return
 	}
 
 	repositories, err := keen.Discover(workingDir)
 	if err != nil {
-		fmt.Printf("Filesystem traversal failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Filesystem traversal failed: %v\n", err)
 		return
 	}
 
@@ -44,7 +44,7 @@ func main() {
 
 	for i := range repositories {
 		if err := keen.Enrich(&repositories[i]); err != nil {
-			fmt.Printf("Failed to inspect %s: %v\n", repositories[i].Path, err)
+			fmt.Fprintf(os.Stderr, "Failed to inspect %s: %v\n", repositories[i].Path, err)
 		}
 	}
 
