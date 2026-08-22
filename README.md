@@ -70,6 +70,22 @@ revealed with a horizontal viewport: scroll it with `Shift+←`/`Shift+→`. Pre
 `q` or `Esc` to quit (Ctrl+C also quits). A persistent `‹ VIEW ›  n / 2` indicator
 shows the active view.
 
+### Repository identity
+
+Keen normally displays repositories by their directory name. When multiple
+repositories in the current result set share that name, Keen automatically
+includes the minimum amount of parent path needed to distinguish them:
+
+```text
+work/api
+personal/api
+```
+
+Identity is resolved from the repositories currently being displayed, so
+filtering can reduce an expanded identity back to its basename. Unique names
+never change, and unrelated repositories are never affected by a collision
+elsewhere in the output.
+
 ### Filter composition
 
 Filters combine using **AND** semantics:
