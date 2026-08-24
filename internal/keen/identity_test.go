@@ -186,22 +186,53 @@ func TestResolveCaseSensitive(t *testing.T) {
 
 // TestResolveAfterFilterCollapsesBack pins the pipeline-stage contract:
 // resolution runs on the displayed set, so a filter-reduced survivor returns
-// to its basename (S7 end-to-end through Sort/Filter).
+// to its basename (S7 end-to-end through Sort/Filter). The dirty fixture is
+// deliberate: an all-clean population would make Filter(ShowDirty) return an
+// empty set, letting the collapse assertion pass vacuously.
 func TestResolveAfterFilterCollapsesBack(t *testing.T) {
-	in := repos("/work/api", "/personal/api")
+	in := []Repository{
+		{Name: "api", Path: "/work/api", Dirty: false},
+		{Name: "api", Path: "/personal/api", Dirty: true},
+	}
 	Sort(in)
 
 	all := ResolveDisplayIdentities(Filter(in, Options{}))
-	// Canonical sort: equal basenames tie-break on Path, so /personal/api
-	// precedes /work/api. Resolution must not disturb that order.
-	wantAll := []string{"personal/api", "work/api"}
+	// Canonical sort: clean precedes dirty, so /work/api comes first despite
+	// losing the Path tie-break. Resolution must not disturb that order.
+	wantAll := []string{"work/api", "personal/api"}
 	if !reflect.DeepEqual(names(all), wantAll) {
 		t.Fatalf("all-mode names = %v, want %v", names(all), wantAll)
 	}
 
 	dirtyOnly := Filter(in, Options{ShowDirty: true})
+	if len(dirtyOnly) != 1 {
+		t.Fatalf("expected exactly one dirty survivor, got %d (%+v)", len(dirtyOnly), dirtyOnly)
+	}
 	resolved := ResolveDisplayIdentities(dirtyOnly)
-	if len(resolved) == 1 && resolved[0].Name != "api" {
-		t.Errorf("filtered survivor name = %q, want api", resolved[0].Name)
+	if got := resolved[0].Name; got != "api" {
+		t.Errorf("resolved identity = %q, want %q", got, "api")
+	}
+}
+
+// TestResolveNoAncestorStaysAtBasename: a path without a meaningful ancestor
+// has nothing to expand and remains at its basename, whether absolute at the
+// filesystem root or purely relative.
+func TestResolveNoAncestorStaysAtBasename(t *testing.T) {
+	got := ResolveDisplayIdentities(repos("/x", "api"))
+	want := []string{"x", "api"}
+	if !reflect.DeepEqual(names(got), want) {
+		t.Errorf("names = %v, want %v", names(got), want)
+	}
+}
+
+// TestResolveRootAdjacentCollisionFreezesExhaustedMember: in a collision
+// between a growable path (/a/x) and a root-adjacent one (/x), only the
+// growable member expands; exhaustion freezes the latter without blocking
+// the former's growth.
+func TestResolveRootAdjacentCollisionFreezesExhaustedMember(t *testing.T) {
+	got := ResolveDisplayIdentities(repos("/a/x", "/x"))
+	want := []string{"a/x", "x"}
+	if !reflect.DeepEqual(names(got), want) {
+		t.Errorf("names = %v, want %v", names(got), want)
 	}
 }
