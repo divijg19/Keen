@@ -1,6 +1,6 @@
 # `Keen`
 
-`Keen` recursively discovers Git repositories under the current working directory and reports their status. The CLI command is `keen`.
+`keen` recursively discovers Git repositories beneath the current working directory and reports their status — clean/dirty, branch, upstream synchronization, and latest commit.
 
 ## Build & install
 
@@ -15,80 +15,58 @@ go install ./cmd/keen
 keen [flags]
 ```
 
-Run `keen` from any directory containing Git repositories. Discovered repositories are grouped by working-tree status (clean before dirty) in a deterministic order (status → name → path).
+Run `keen` from any directory containing Git repositories. Repositories are grouped by working-tree status (clean before dirty) and ordered deterministically by status → name → path.
 
 ## Flags
 
-| Flag       | Description                                                          |
-| ---------- | -------------------------------------------------------------------- |
-| `--clean`  | Show only repositories with a clean worktree.                        |
-| `--dirty`  | Show only repositories with uncommitted changes.                     |
-| `--recent` | Show only repositories with commits within duration (e.g. 24h, 7d). |
-| `--compact`| Use a compact one-line-per-repository layout (canonical report only).|
-| `-r`       | Use the rich textual report.                                         |
-| `-i`       | Open the interactive browser (prints a one-shot overview when stdin is not a terminal). |
-| `--help`   | Print usage information.                                             |
+| Flag         | Description                                                       |
+| ------------ | ----------------------------------------------------------------- |
+| `--clean`    | Show only clean repositories.                                     |
+| `--dirty`    | Show only dirty repositories.                                     |
+| `--recent`   | Show only repositories with a commit within a duration (e.g. `24h`, `7d`). |
+| `--compact`  | Compact one-line layout (canonical report only).                  |
+| `-r`         | Rich textual report.                                              |
+| `-i`         | Interactive repository investigation.                             |
+| `--help`     | Print usage.                                                      |
 
-Filtering and presentation mode are orthogonal: `--clean`, `--dirty`, and
-`--recent` control *which* repositories are selected, while the presentation mode
-(`keen`, `-r`, `-i`) controls *how* they are presented. The mode never changes
-selection; the same filters apply and the browser/rich report consume the already
-filtered set.
-
-Mode flags select the presentation; modifiers refine the canonical report unless
-explicitly supported by another mode. `--compact` belongs to the canonical
-renderer, so `keen -r --compact` and `keen -i --compact` fail with a usage error
-rather than being ignored.
-
-### Presentation modes
+## Presentation modes
 
 ```text
-keen        canonical textual report
+keen        canonical textual report (default)
 keen -r     rich textual report
-keen -i     interactive browser
+keen -i     interactive repository investigation
 ```
 
-`-i` is the permanent interactive entrypoint. The lightweight browser in v0.5.6
-may later be replaced by a full alt-screen TUI without changing the public
-invocation.
+Selecting a mode never changes which repositories are shown. `--clean`, `--dirty`, and `--recent` always control *which* repositories are selected; the mode controls *how* the selected set is rendered. All modes consume the same filtered set.
 
-### Interactive browser
+`--compact` is specific to the canonical renderer, so `keen -r --compact` and `keen -i --compact` fail with a usage error rather than being silently ignored.
 
-The browser contains exactly two views:
+## Interactive mode
 
-| View      | Answers                                  | Shows                                                        |
+`keen -i` presents three surfaces:
+
+| Surface   | Answers                                  | Shows                                                        |
 | --------- | ---------------------------------------- | ------------------------------------------------------------ |
-| Overview  | What needs my attention?                 | status, name, branch, upstream, ahead/behind.                |
-| Activity  | What happened recently?                   | name, short hash, commit subject, relative commit time.      |
+| List      | Which repositories exist?                | identity, status, branch, upstream/synchronization            |
+| Detail    | What is this repository?                 | name, path, status, branch, upstream, ahead, behind, last commit |
+| Activity  | What happened recently in this repository? | repository, hash, subject, relative time (selected repo)    |
 
-Overview shows each repository's branch *and* its upstream (using `↑– ↓–` when no
-upstream is configured). Activity shows the latest commit identity (short hash,
-subject, relative time) and `No commits` for repositories with no history.
+List is an addressable index: each row carries enough to select the correct repository. Detail shows the full repository path plus working state and synchronization. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none).
 
-Navigate between views with `←`/`→` or `h`/`l`. A view wider than the terminal is
-revealed with a horizontal viewport: scroll it with `Shift+←`/`Shift+→`. Press
-`q` or `Esc` to quit (Ctrl+C also quits). A persistent `‹ VIEW ›  n / 2` indicator
-shows the active view.
+| Key             | Action                                  |
+| --------------- | --------------------------------------- |
+| `↑`/`↓`         | Move selection                          |
+| `Enter`         | Inspect the selected repository (List → Detail) |
+| `←`/`Esc`       | Return (Detail → List; Activity → Detail) |
+| `q` / `Ctrl+C`  | Quit                                    |
 
-### Repository identity
+A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 3`, etc.) identifies the active view and position. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.
 
-Keen normally displays repositories by their directory name. When multiple
-repositories in the current result set share that name, Keen automatically
-includes the minimum amount of parent path needed to distinguish them:
+When stdin is not a terminal (e.g. `keen -i < input`), `keen -i` prints a one-shot overview and exits, preserving script compatibility.
 
-```text
-work/api
-personal/api
-```
+## Filtering
 
-Identity is resolved from the repositories currently being displayed, so
-filtering can reduce an expanded identity back to its basename. Unique names
-never change, and unrelated repositories are never affected by a collision
-elsewhere in the output.
-
-### Filter composition
-
-Filters combine using **AND** semantics:
+Filters combine using **AND** semantics: `--clean --dirty` selects all repositories; `--clean --recent 7d` selects repositories that are clean *and* recently active.
 
 | Invocation                     | Selection               | Presentation |
 | ------------------------------ | ----------------------- | ------------ |
@@ -97,15 +75,12 @@ Filters combine using **AND** semantics:
 | `keen --dirty`                 | dirty                   | grouped      |
 | `keen --recent 7d`             | recent (last 7 days)    | grouped      |
 | `keen --dirty --recent 7d`     | dirty AND recent        | grouped      |
-| `keen --clean --recent 7d`     | clean AND recent        | grouped      |
-| `keen --compact --recent 7d`   | recent                  | compact      |
 | `keen --clean --dirty`         | all                     | grouped      |
-| `keen -r`                      | all                     | rich         |
+| `keen --compact --recent 7d`   | recent                  | compact      |
 | `keen -r --dirty`              | dirty                   | rich         |
-| `keen -i`                      | all                     | interactive  |
 | `keen -i --recent 7d`          | recent (last 7 days)    | interactive  |
 
-Supported `--recent` duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks).
+Supported `--recent` units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks). The duration must be positive.
 
 ## Output
 
@@ -123,16 +98,28 @@ Grouped mode prints a `Git Status: CLEAN` / `Git Status: DIRTY` section only whe
 [dirty] project-b       (feature/x → origin/feature/x) ↑1 ↓0  | a1b2c3d fix parser panic | 5 minutes ago
 ```
 
-If no repositories exist, `keen` prints `No repositories found.` If repositories exist but none match active filters, `keen` prints `No repositories match the selected filters.`
+Each row reports the branch, the configured upstream (`branch → upstream`), commits ahead/behind that upstream (`↑n ↓n`), the latest commit (seven-character short hash plus subject), and the commit's relative time.
 
-For each repository, `keen` reports the branch, the configured upstream (`branch → upstream`), commits ahead/behind that upstream (`↑n ↓n`), the latest commit (seven-character short hash plus subject), and the relative time of that commit.
+If no repositories exist, `keen` prints `No repositories found.` If repositories exist but none match the active filters, it prints `No repositories match the selected filters.`
 
 ### Rich report
 
-`keen -r` presents the same facts as an aligned column table (status, name, branch, upstream, ahead, behind, hash, subject, time) for easier comparison across repositories. The table adapts deterministically to the terminal width: columns tighten first, lower-priority columns are dropped next, and on very narrow terminals `keen -r` renders the canonical grouped report instead. Rendering is deterministic — the same repository state at the same width always produces identical output.
+`keen -r` presents the same facts as an aligned column table (status, name, branch, upstream, ahead, behind, hash, subject, time). The table adapts deterministically to terminal width — columns tighten first, lower-priority columns are dropped next, and on very narrow terminals `keen -r` renders the canonical grouped report. The same repository state at the same width always produces identical output.
+
+## Repository identity
+
+Keen displays repositories by their directory name. Repository names remain basenames when unique, and gain only the minimum parent path necessary when collisions exist among the currently displayed repositories:
+
+```text
+work/api
+personal/api
+```
+
+Identity is resolved from the repositories currently being displayed, so filtering can reduce an expanded identity back to its basename. Unique names never change, and unrelated repositories are never affected by a collision elsewhere in the output.
 
 ## Known limitations
 
-- A repository in a detached HEAD state reports `detached` as its branch; this is expected and not an error.
-- Nested repositories (a repository inside another repository) are not separately reported, since traversal stops at the first discovered repository.
-- Repositories without an upstream report `↑– ↓–` (a non-numeric marker) so that "0/0" is not mistaken for a synchronized state; the configured upstream, when present, is shown as `branch → upstream`. Repositories with no commits report `No commits`.
+- A detached HEAD reports `detached` as its branch — expected, not an error.
+- A repository inside another repository is not separately reported; traversal stops at the first discovered repository.
+- A repository without an upstream reports `↑– ↓–` (a non-numeric marker, so `0/0` is not mistaken for a synchronized state); the configured upstream, when present, is shown as `branch → upstream`.
+- A repository with no commits reports `No commits`.

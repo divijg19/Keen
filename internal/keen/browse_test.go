@@ -42,23 +42,33 @@ func browseSample() []Repository {
 }
 
 func TestRenderBrowseHeader(t *testing.T) {
-	overview := renderBrowse(browseSample(), 3, BrowseOverview, 40)
-	if !strings.Contains(overview, "‹ OVERVIEW ›") {
-		t.Errorf("overview header missing: %q", overview)
+	overview := renderBrowse(browseSample(), 3, BrowseList, 40)
+	if !strings.Contains(overview, "‹ LIST ›") {
+		t.Errorf("list header missing: %q", overview)
 	}
-	if !strings.Contains(overview, "1 / 2") {
-		t.Errorf("overview indicator missing: %q", overview)
+	if !strings.Contains(overview, "1 / 3") {
+		t.Errorf("list indicator missing: %q", overview)
 	}
-	if !strings.Contains(overview, "←/→ views") {
-		t.Errorf("navigation hint missing: %q", overview)
+	if !strings.Contains(overview, "↑/↓ select") {
+		t.Errorf("list navigation hint missing: %q", overview)
 	}
 
 	activity := renderBrowse(browseSample(), 3, BrowseActivity, 40)
 	if !strings.Contains(activity, "‹ ACTIVITY ›") {
 		t.Errorf("activity header missing: %q", activity)
 	}
-	if !strings.Contains(activity, "2 / 2") {
+	if !strings.Contains(activity, "3 / 3") {
 		t.Errorf("activity indicator missing: %q", activity)
+	}
+	detail := renderBrowse(browseSample(), 3, BrowseDetail, 40)
+	if !strings.Contains(detail, "‹ DETAIL ›") {
+		t.Errorf("detail header missing: %q", detail)
+	}
+	if !strings.Contains(detail, "2 / 3") {
+		t.Errorf("detail indicator missing: %q", detail)
+	}
+	if !strings.Contains(detail, "←/Esc back") {
+		t.Errorf("detail navigation hint missing: %q", detail)
 	}
 }
 
@@ -132,10 +142,12 @@ func TestCyclePageWrapsAround(t *testing.T) {
 		dir  int
 		want BrowsePage
 	}{
-		{BrowseOverview, -1, BrowseActivity},
-		{BrowseActivity, 1, BrowseOverview},
-		{BrowseOverview, 1, BrowseActivity},
-		{BrowseActivity, -1, BrowseOverview},
+		{BrowseList, -1, BrowseActivity},
+		{BrowseActivity, 1, BrowseList},
+		{BrowseList, 1, BrowseDetail},
+		{BrowseDetail, 1, BrowseActivity},
+		{BrowseDetail, -1, BrowseList},
+		{BrowseActivity, -1, BrowseDetail},
 	}
 	for _, c := range cases {
 		if got := cyclePage(c.from, c.dir); got != c.want {
@@ -159,8 +171,10 @@ func TestInterpretSequence(t *testing.T) {
 		"\x1b[1;5D": keyScrollLeft,
 		"\x1b[1;2C": keyScrollRight,
 		"\x1b[1;5C": keyScrollRight,
-		"\x1b[A":    keyNone,
-		"\x1b[B":    keyNone,
+		"\x1b[A":    keyUp,
+		"\x1b[B":    keyDown,
+		"\r":        keyEnter,
+		"\n":        keyEnter,
 		"x":         keyNone,
 	}
 	for in, want := range cases {
@@ -230,12 +244,12 @@ func TestTruncateIsRuneAware(t *testing.T) {
 // and browseHeaderLine so the constant cannot silently drift out of sync with
 // the emitted screen.
 func TestBrowseHeaderLineContract(t *testing.T) {
-	lines := strings.Split(renderBrowse(browseSample(), 3, BrowseOverview, 60), "\n")
+	lines := strings.Split(renderBrowse(browseSample(), 3, BrowseList, 60), "\n")
 	if browseHeaderLine < 0 || browseHeaderLine >= len(lines) {
 		t.Fatalf("browseHeaderLine %d out of range for %d lines", browseHeaderLine, len(lines))
 	}
 	header := lines[browseHeaderLine]
-	if !strings.Contains(header, "‹ OVERVIEW ›") || !strings.Contains(header, "1 / 2") {
+	if !strings.Contains(header, "‹ LIST ›") || !strings.Contains(header, "1 / 3") {
 		t.Errorf("line %d is not the view-indicator header: %q", browseHeaderLine, header)
 	}
 }
@@ -297,15 +311,18 @@ func TestRunExitsWhenInputStreamEnds(t *testing.T) {
 }
 
 func TestRunQuitsCyclesAndIgnoresUnknownInput(t *testing.T) {
-	state := &browserState{repos: browseSample(), total: 3, page: BrowseOverview, viewport: 80}
+	state := &browserState{repos: browseSample(), total: 3, page: BrowseList, viewport: 80}
 	script := []struct {
 		action keyAction
 		ok     bool
 	}{
-		{keyRight, true},       // Overview -> Activity
-		{keyLeft, true},        // Activity -> Overview (wraparound)
-		{keyScrollRight, true}, // scroll within bounds
-		{keyNone, true},        // unknown/vertical keys are ignored, loop continues
+		{keyDown, true},        // move selection down (ignored for page, but tested)
+		{keyEnter, true},       // List -> Detail
+		{keyRight, true},       // Detail -> Activity
+		{keyLeft, true},        // Activity -> Detail
+		{keyEsc, true},         // Detail -> List
+		{keyScrollRight, true}, // scroll within bounds (list)
+		{keyNone, true},        // unknown keys are ignored, loop continues
 		{keyQuit, true},        // exit here
 		{keyQuit, true},        // must never be consumed
 	}
@@ -324,25 +341,49 @@ func TestRunQuitsCyclesAndIgnoresUnknownInput(t *testing.T) {
 	if i != len(script)-1 {
 		t.Errorf("consumed %d events, want %d (stop at quit)", i, len(script)-1)
 	}
-	if state.page != BrowseOverview {
-		t.Errorf("page = %v, want Overview after right/left wraparound", state.page)
+	if state.page != BrowseList {
+		t.Errorf("page = %v, want List after navigation back", state.page)
 	}
 }
 
-func TestRunExitsOnEscape(t *testing.T) {
-	state := &browserState{repos: browseSample(), total: 3, page: BrowseActivity, viewport: 80}
-	calls := 0
+func TestRunIgnoresEscapeFromList(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	i := 0
 	captureOutput(func() {
 		state.run(func() (keyAction, bool) {
-			calls++
-			return keyEsc, true
+			i++
+			if i == 1 {
+				return keyEsc, true
+			}
+			return keyQuit, true
 		})
 	})
-	if calls != 1 {
-		t.Errorf("Esc should exit immediately; reads = %d", calls)
+	if i != 2 {
+		t.Errorf("Esc from list should be ignored; reads = %d, want 2", i)
 	}
-	if state.page != BrowseActivity {
-		t.Errorf("page changed without a navigation event: %v", state.page)
+	if state.page != BrowseList {
+		t.Errorf("page changed unexpectedly: %v", state.page)
+	}
+}
+
+func TestRunQuitsOnEscapeFromDetail(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.page = BrowseDetail
+	i := 0
+	captureOutput(func() {
+		state.run(func() (keyAction, bool) {
+			i++
+			if i == 1 {
+				return keyEsc, true
+			}
+			return keyQuit, true
+		})
+	})
+	if i != 2 {
+		t.Errorf("Esc from detail then quit; reads = %d, want 2", i)
+	}
+	if state.page != BrowseList {
+		t.Errorf("page = %v, want List", state.page)
 	}
 }
 
@@ -383,5 +424,350 @@ func TestReadKeyParsesLiveInput(t *testing.T) {
 	}
 	if action != keyQuit {
 		t.Errorf("action = %v, want keyQuit", action)
+	}
+}
+
+// --- v0.6.0: Selection tests ---
+
+func TestSelectionInitial(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	if s.selected != 0 {
+		t.Errorf("initial selected = %d, want 0", s.selected)
+	}
+	empty := newBrowserState(nil, 0)
+	if empty.selected != -1 {
+		t.Errorf("empty initial selected = %d, want -1", empty.selected)
+	}
+	single := newBrowserState([]Repository{{Name: "solo", Path: "/solo"}}, 1)
+	if single.selected != 0 {
+		t.Errorf("single initial selected = %d, want 0", single.selected)
+	}
+}
+
+func TestSelectionMove(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.moveSelection(1)
+	if s.selected != 1 {
+		t.Errorf("move down: selected = %d, want 1", s.selected)
+	}
+	s.moveSelection(1)
+	if s.selected != 2 {
+		t.Errorf("move down: selected = %d, want 2", s.selected)
+	}
+	s.moveSelection(-1)
+	if s.selected != 1 {
+		t.Errorf("move up: selected = %d, want 1", s.selected)
+	}
+}
+
+func TestSelectionBounds(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.moveSelection(-10)
+	if s.selected != 0 {
+		t.Errorf("upper bound: selected = %d, want 0", s.selected)
+	}
+	s.moveSelection(10)
+	if s.selected != 2 {
+		t.Errorf("lower bound: selected = %d, want 2", s.selected)
+	}
+	empty := newBrowserState(nil, 0)
+	empty.moveSelection(1)
+	if empty.selected != -1 {
+		t.Errorf("empty move: selected = %d, want -1", empty.selected)
+	}
+}
+
+// --- v0.6.0: Vertical viewport tests ---
+
+func TestVerticalViewport(t *testing.T) {
+	// All items fit
+	s := newBrowserState(browseSample(), 3)
+	s.viewportHeight = 24
+	s.ensureVisible()
+	if s.listOffset != 0 {
+		t.Errorf("all fit: listOffset = %d, want 0", s.listOffset)
+	}
+	// Long list, selected at top
+	long := make([]Repository, 20)
+	for i := range long {
+		long[i] = Repository{Name: fmt.Sprintf("repo-%02d", i), Path: fmt.Sprintf("/repo-%02d", i)}
+	}
+	s = newBrowserState(long, 20)
+	s.viewportHeight = 10 // availableRows = 4
+	s.selected = 0
+	s.ensureVisible()
+	if s.listOffset != 0 {
+		t.Errorf("top: listOffset = %d, want 0", s.listOffset)
+	}
+	// Selected at bottom
+	s.selected = 19
+	s.ensureVisible()
+	if s.listOffset != 16 {
+		t.Errorf("bottom: listOffset = %d, want 16", s.listOffset)
+	}
+	// Scroll down
+	s.selected = 5
+	s.listOffset = 0
+	s.ensureVisible()
+	if s.listOffset != 2 {
+		t.Errorf("scroll down: listOffset = %d, want 2", s.listOffset)
+	}
+	// Scroll up
+	s.selected = 2
+	s.ensureVisible()
+	if s.listOffset != 2 {
+		t.Errorf("scroll up: listOffset = %d, want 2 (still visible)", s.listOffset)
+	}
+	s.selected = 1
+	s.ensureVisible()
+	if s.listOffset != 1 {
+		t.Errorf("scroll up: listOffset = %d, want 1", s.listOffset)
+	}
+	// Selection remains visible after moves
+	for _, sel := range []int{0, 5, 10, 19} {
+		s.selected = sel
+		s.ensureVisible()
+		if sel < s.listOffset || sel >= s.listOffset+s.availableRows() {
+			t.Errorf("selected %d not visible in window [%d, %d)", sel, s.listOffset, s.listOffset+s.availableRows())
+		}
+	}
+}
+
+// --- v0.6.0: Navigation tests ---
+
+func TestNavigationListToDetail(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.page = BrowseList
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			// Enter -> Detail, then quit
+			if s.page == BrowseList {
+				return keyEnter, true
+			}
+			return keyQuit, true
+		})
+	})
+	if s.page != BrowseDetail {
+		t.Errorf("list Enter -> detail: page = %v, want Detail", s.page)
+	}
+}
+
+func TestNavigationDetailToList(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.page = BrowseDetail
+	i := 0
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			i++
+			if i == 1 {
+				return keyLeft, true
+			}
+			return keyQuit, true
+		})
+	})
+	if i != 2 {
+		t.Errorf("detail Left -> list then quit; reads = %d, want 2", i)
+	}
+	if s.page != BrowseList {
+		t.Errorf("detail Left -> list: page = %v, want List", s.page)
+	}
+	s.page = BrowseDetail
+	i = 0
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			i++
+			if i == 1 {
+				return keyEsc, true
+			}
+			return keyQuit, true
+		})
+	})
+	if i != 2 {
+		t.Errorf("detail Esc -> list then quit; reads = %d, want 2", i)
+	}
+	if s.page != BrowseList {
+		t.Errorf("detail Esc -> list: page = %v, want List", s.page)
+	}
+}
+
+func TestNavigationDetailToActivity(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.page = BrowseDetail
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			if s.page == BrowseDetail {
+				return keyRight, true
+			}
+			return keyQuit, true
+		})
+	})
+	if s.page != BrowseActivity {
+		t.Errorf("detail Right -> activity: page = %v, want Activity", s.page)
+	}
+}
+
+func TestNavigationActivityToDetail(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.page = BrowseActivity
+	i := 0
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			i++
+			if i == 1 {
+				return keyLeft, true
+			}
+			return keyQuit, true
+		})
+	})
+	if s.page != BrowseDetail {
+		t.Errorf("activity Left -> detail: page = %v, want Detail", s.page)
+	}
+}
+
+func TestNavigationQuitFromAllPages(t *testing.T) {
+	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseActivity} {
+		s := newBrowserState(browseSample(), 3)
+		s.page = page
+		calls := 0
+		captureOutput(func() {
+			s.run(func() (keyAction, bool) {
+				calls++
+				return keyQuit, true
+			})
+		})
+		if calls != 1 {
+			t.Errorf("quit from %v: calls = %d, want 1", page, calls)
+		}
+	}
+}
+
+func TestNavigationEOF(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	calls := 0
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			calls++
+			return keyNone, false
+		})
+	})
+	if calls != 1 {
+		t.Errorf("EOF: calls = %d, want 1", calls)
+	}
+}
+
+// --- v0.6.0: Detail rendering tests ---
+
+func TestRenderDetail(t *testing.T) {
+	repo := Repository{
+		Name: "myrepo", Path: "/home/user/myrepo", Branch: "main", Upstream: "origin/main",
+		Dirty: false, Ahead: 2, Behind: 1,
+		LastCommitHash: "abc123def", LastCommitSubject: "fix bug", LastCommitTime: "2 hours ago",
+	}
+	out := renderDetail(repo, 80)
+	for _, want := range []string{"myrepo", "/home/user/myrepo", "clean", "main", "origin/main", "2", "1", "abc123d", "fix bug", "2 hours ago"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("detail missing %q in %q", want, out)
+		}
+	}
+	// Dirty
+	repo.Dirty = true
+	out = renderDetail(repo, 80)
+	if !strings.Contains(out, "dirty") {
+		t.Errorf("detail dirty: %q", out)
+	}
+	// No upstream
+	repo.Upstream = ""
+	out = renderDetail(repo, 80)
+	if !strings.Contains(out, "—") {
+		t.Errorf("detail no upstream: %q", out)
+	}
+	// Detached
+	repo.Branch = ""
+	out = renderDetail(repo, 80)
+	if !strings.Contains(out, "detached") {
+		t.Errorf("detail detached: %q", out)
+	}
+	// No commits
+	repo.LastCommitHash = ""
+	out = renderDetail(repo, 80)
+	if !strings.Contains(out, "No commits") {
+		t.Errorf("detail no commits: %q", out)
+	}
+	// Long path
+	repo.Path = strings.Repeat("a", 100) + "/repo"
+	out = renderDetail(repo, 80)
+	if !strings.Contains(out, "a") {
+		t.Errorf("detail long path: %q", out)
+	}
+	// Collision-resolved identity
+	repo.Name = "work/api"
+	out = renderDetail(repo, 80)
+	if !strings.Contains(out, "work/api") {
+		t.Errorf("detail collision identity: %q", out)
+	}
+}
+
+// --- v0.6.0: Activity rendering tests (contextual) ---
+
+func TestRenderActivitySelected(t *testing.T) {
+	repo := Repository{Name: "myrepo", LastCommitHash: "abc123", LastCommitSubject: "feat", LastCommitTime: "now"}
+	out := renderActivityForSelected(repo, 80)
+	if !strings.Contains(out, "myrepo") || !strings.Contains(out, "abc123") {
+		t.Errorf("activity selected: %q", out)
+	}
+	repo.LastCommitHash = ""
+	out = renderActivityForSelected(repo, 80)
+	if !strings.Contains(out, "No commits") {
+		t.Errorf("activity no commits: %q", out)
+	}
+	long := Repository{Name: "r", LastCommitHash: "abc", LastCommitSubject: strings.Repeat("x", 100), LastCommitTime: "now"}
+	out = renderActivityForSelected(long, 80)
+	if !strings.Contains(out, "x") {
+		t.Errorf("activity long subject: %q", out)
+	}
+	coll := Repository{Name: "work/api", LastCommitHash: "abc", LastCommitSubject: "s", LastCommitTime: "now"}
+	out = renderActivityForSelected(coll, 80)
+	if !strings.Contains(out, "work/api") {
+		t.Errorf("activity collision identity: %q", out)
+	}
+}
+
+// --- v0.6.0: Pipeline integrity ---
+
+func TestPipelineIntegrity(t *testing.T) {
+	repos := []Repository{
+		{Name: "api", Path: "/work/api", Dirty: false},
+		{Name: "api", Path: "/personal/api", Dirty: true},
+	}
+	// Simulate pipeline: Filter -> Resolve -> select -> detail
+	filtered := Filter(repos, Options{})
+	presented := ResolveDisplayIdentities(filtered)
+	s := newBrowserState(presented, len(repos))
+	s.selected = 1 // select second (personal/api)
+	repo := s.selectedRepo()
+	if repo == nil || repo.Path != "/personal/api" {
+		t.Errorf("selected repo Path = %q, want /personal/api", repo.Path)
+	}
+	if repo.Name != "personal/api" {
+		t.Errorf("selected display Name = %q, want personal/api", repo.Name)
+	}
+	// Detail must use same repo object, not lookup by Name
+	detail := renderDetail(*repo, 80)
+	if !strings.Contains(detail, "/personal/api") {
+		t.Errorf("detail must show canonical Path: %q", detail)
+	}
+}
+
+// --- v0.6.0: Rendering determinism ---
+
+func TestRenderingDeterminism(t *testing.T) {
+	repos := browseSample()
+	s := newBrowserState(repos, 3)
+	s.selected = 1
+	s.page = BrowseList
+	a := captureOutput(s.render)
+	b := captureOutput(s.render)
+	if a != b {
+		t.Errorf("rendering not deterministic")
 	}
 }
