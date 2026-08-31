@@ -73,7 +73,7 @@ func TestRenderBrowseHeader(t *testing.T) {
 }
 
 func TestRenderOverviewIncludesUpstream(t *testing.T) {
-	out := renderBrowse(browseSample(), 3, BrowseOverview, 80)
+	out := renderBrowse(browseSample(), 3, BrowseList, 80)
 
 	if !strings.Contains(out, "CLEAN") || !strings.Contains(out, "DIRTY") {
 		t.Errorf("expected CLEAN and DIRTY sections: %q", out)
@@ -125,48 +125,28 @@ func TestRenderActivityShowsCommitIdentity(t *testing.T) {
 }
 
 func TestRenderBrowseEmptyStates(t *testing.T) {
-	found := renderBrowse(nil, 0, BrowseOverview, 40)
+	found := renderBrowse(nil, 0, BrowseList, 40)
 	if !strings.Contains(found, "No repositories found.") {
 		t.Errorf("expected 'No repositories found.': %q", found)
 	}
 
-	filtered := renderBrowse(nil, 5, BrowseOverview, 40)
+	filtered := renderBrowse(nil, 5, BrowseList, 40)
 	if !strings.Contains(filtered, "No repositories match the selected filters.") {
 		t.Errorf("expected filtered empty message: %q", filtered)
 	}
 }
 
-func TestCyclePageWrapsAround(t *testing.T) {
-	cases := []struct {
-		from BrowsePage
-		dir  int
-		want BrowsePage
-	}{
-		{BrowseList, -1, BrowseActivity},
-		{BrowseActivity, 1, BrowseList},
-		{BrowseList, 1, BrowseDetail},
-		{BrowseDetail, 1, BrowseActivity},
-		{BrowseDetail, -1, BrowseList},
-		{BrowseActivity, -1, BrowseDetail},
-	}
-	for _, c := range cases {
-		if got := cyclePage(c.from, c.dir); got != c.want {
-			t.Errorf("cyclePage(%v, %d) = %v, want %v", c.from, c.dir, got, c.want)
-		}
-	}
-}
-
+// TestInterpretSequence pins the input binding table. Navigation is
+// hierarchical: Enter advances, ←/Esc return to the parent, and a plain → has
+// no cyclic "next view" meaning.
 func TestInterpretSequence(t *testing.T) {
 	cases := map[string]keyAction{
-		"h":         keyLeft,
-		"l":         keyRight,
+		"\x1b[D":    keyLeft,
 		"H":         keyScrollLeft,
 		"L":         keyScrollRight,
 		"q":         keyQuit,
 		"\x03":      keyQuit, // Ctrl+C
 		"\x1b":      keyEsc,
-		"\x1b[D":    keyLeft,
-		"\x1b[C":    keyRight,
 		"\x1b[1;2D": keyScrollLeft,
 		"\x1b[1;5D": keyScrollLeft,
 		"\x1b[1;2C": keyScrollRight,
@@ -180,6 +160,17 @@ func TestInterpretSequence(t *testing.T) {
 	for in, want := range cases {
 		if got := interpretSequence(in); got != want {
 			t.Errorf("interpretSequence(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// TestInterpretSequenceRejectsLegacyNavKeys pins that the old vim-style and
+// arrow-wrap navigation ("h"/"l", plain "→") no longer map to any action, so
+// the cyclic-browser model cannot resurface through the input layer.
+func TestInterpretSequenceRejectsLegacyNavKeys(t *testing.T) {
+	for _, in := range []string{"h", "l", "\x1b[C"} {
+		if got := interpretSequence(in); got != keyNone {
+			t.Errorf("interpretSequence(%q) = %v, want keyNone (legacy nav key removed)", in, got)
 		}
 	}
 }
@@ -259,7 +250,7 @@ func TestBrowseHeaderLineContract(t *testing.T) {
 // identity. It exercises browserState.render() (the composition that was
 // buggy), not just renderBrowse.
 func TestRenderKeepsViewIdentityVisibleAtEveryOffset(t *testing.T) {
-	for _, page := range []BrowsePage{BrowseOverview, BrowseActivity} {
+	for _, page := range []BrowsePage{BrowseList, BrowseActivity} {
 		t.Run(page.label(), func(t *testing.T) {
 			state := &browserState{repos: browseSample(), total: 3, page: page, viewport: 20}
 			maxOffset := state.contentWidth() - state.viewport
@@ -291,7 +282,7 @@ func TestRenderKeepsViewIdentityVisibleAtEveryOffset(t *testing.T) {
 // P1-2: a dead input stream must terminate the loop after a single failed
 // read instead of busy-looping on keyNone forever.
 func TestRunExitsWhenInputStreamEnds(t *testing.T) {
-	state := &browserState{repos: browseSample(), total: 3, page: BrowseOverview, viewport: 80}
+	state := &browserState{repos: browseSample(), total: 3, page: BrowseList, viewport: 80}
 	calls := 0
 	captureOutput(func() {
 		state.run(func() (keyAction, bool) {
@@ -310,15 +301,15 @@ func TestRunExitsWhenInputStreamEnds(t *testing.T) {
 	}
 }
 
-func TestRunQuitsCyclesAndIgnoresUnknownInput(t *testing.T) {
+func TestRunHierarchicalNavigationAndIgnoresUnknownInput(t *testing.T) {
 	state := &browserState{repos: browseSample(), total: 3, page: BrowseList, viewport: 80}
 	script := []struct {
 		action keyAction
 		ok     bool
 	}{
-		{keyDown, true},        // move selection down (ignored for page, but tested)
+		{keyDown, true},        // move selection down (list)
 		{keyEnter, true},       // List -> Detail
-		{keyRight, true},       // Detail -> Activity
+		{keyEnter, true},       // Detail -> Activity
 		{keyLeft, true},        // Activity -> Detail
 		{keyEsc, true},         // Detail -> List
 		{keyScrollRight, true}, // scroll within bounds (list)
@@ -343,6 +334,50 @@ func TestRunQuitsCyclesAndIgnoresUnknownInput(t *testing.T) {
 	}
 	if state.page != BrowseList {
 		t.Errorf("page = %v, want List after navigation back", state.page)
+	}
+}
+
+// TestRunEnterDoesNotCycleFromActivity pins that advancing with Enter from the
+// deepest surface (Activity) is a no-op rather than wrapping around to List.
+// Navigation is a strict hierarchy (List → Detail → Activity), never a carousel.
+func TestRunEnterDoesNotCycleFromActivity(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.page = BrowseActivity
+	i := 0
+	captureOutput(func() {
+		state.run(func() (keyAction, bool) {
+			i++
+			if i == 1 {
+				return keyEnter, true
+			}
+			return keyQuit, true
+		})
+	})
+	if i != 2 {
+		t.Errorf("Enter from Activity then quit; reads = %d, want 2", i)
+	}
+	if state.page != BrowseActivity {
+		t.Errorf("page = %v, want Activity (Enter must not wrap to List)", state.page)
+	}
+}
+
+// TestRunForwardArrowIsNoOp pins that a plain → does not advance to another
+// surface; the forward direction is exclusively Enter.
+func TestRunForwardArrowIsNoOp(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.page = BrowseDetail
+	i := 0
+	captureOutput(func() {
+		state.run(func() (keyAction, bool) {
+			i++
+			if i == 1 {
+				return interpretSequence("\x1b[C"), true // plain →
+			}
+			return keyQuit, true
+		})
+	})
+	if state.page != BrowseDetail {
+		t.Errorf("page = %v, want Detail (plain → must not advance)", state.page)
 	}
 }
 
@@ -596,13 +631,13 @@ func TestNavigationDetailToActivity(t *testing.T) {
 	captureOutput(func() {
 		s.run(func() (keyAction, bool) {
 			if s.page == BrowseDetail {
-				return keyRight, true
+				return keyEnter, true
 			}
 			return keyQuit, true
 		})
 	})
 	if s.page != BrowseActivity {
-		t.Errorf("detail Right -> activity: page = %v, want Activity", s.page)
+		t.Errorf("detail Enter -> activity: page = %v, want Activity", s.page)
 	}
 }
 
@@ -652,6 +687,62 @@ func TestNavigationEOF(t *testing.T) {
 	})
 	if calls != 1 {
 		t.Errorf("EOF: calls = %d, want 1", calls)
+	}
+}
+
+// TestNavigationKeepsSelectionValid drives the full hierarchy round-trip
+// (List → Detail → Activity → Detail → List) and asserts the selection index
+// stays a valid address into the repository set after every transition.
+func TestNavigationKeepsSelectionValid(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.selected = 2
+	i := 0
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			i++
+			switch i {
+			case 1:
+				return keyEnter, true // List -> Detail
+			case 2:
+				return keyEnter, true // Detail -> Activity
+			case 3:
+				return keyLeft, true // Activity -> Detail
+			case 4:
+				return keyEsc, true // Detail -> List
+			}
+			return keyQuit, true
+		})
+	})
+	if s.page != BrowseList {
+		t.Errorf("round-trip end page = %v, want List", s.page)
+	}
+	if s.selected < 0 || s.selected >= len(s.repos) {
+		t.Errorf("selection %d out of bounds after round-trip", s.selected)
+	}
+	if s.selectedRepo() == nil {
+		t.Error("selectedRepo() nil after navigation with a valid prior selection")
+	}
+}
+
+// TestEnterFromListWithNoSelectionDoesNotNavigate pins that a bare Enter on an
+// empty list (selection -1) does not advance to Detail; there is nothing to
+// inspect, so the surface stays put.
+func TestEnterFromListWithNoSelectionDoesNotNavigate(t *testing.T) {
+	s := newBrowserState(nil, 0)
+	s.page = BrowseList
+	s.selected = -1
+	i := 0
+	captureOutput(func() {
+		s.run(func() (keyAction, bool) {
+			i++
+			if i == 1 {
+				return keyEnter, true
+			}
+			return keyQuit, true
+		})
+	})
+	if s.page != BrowseList {
+		t.Errorf("Enter on empty list: page = %v, want List (no navigation)", s.page)
 	}
 }
 

@@ -25,7 +25,7 @@ func parseArgs(args []string) (keen.Options, error) {
 	fs.StringVar(&recentFlag, "recent", "", "show only repositories with commits within duration (e.g. 30m, 24h, 7d)")
 	fs.BoolVar(&opts.Compact, "compact", false, "use compact output (canonical report only)")
 	fs.BoolVar(&opts.Rich, "r", false, "use the rich textual report")
-	fs.BoolVar(&opts.Interactive, "i", false, "open the interactive browser (prints a one-shot overview when stdin is not a terminal)")
+	fs.BoolVar(&opts.Interactive, "i", false, "open the interactive investigation (prints a one-shot overview when stdin is not a terminal)")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}

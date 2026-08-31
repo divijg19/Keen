@@ -38,7 +38,7 @@ const (
 // Presentation is expressed as three explicit, mutually exclusive modes:
 //   - canonical textual report (default)
 //   - rich textual report (-r)
-//   - interactive browser (-i)
+//   - interactive investigation (-i)
 //
 // Selection flags (ShowClean/ShowDirty/HasRecent) apply identically across all
 // three modes; a presentation mode never alters repository selection.

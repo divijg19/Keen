@@ -9,14 +9,14 @@ import (
 )
 
 // keyAction is the normalized result of reading one user input event in the
-// browser. Both raw (unix) and fallback (non-unix) readers feed interpretSequence
-// so that navigation semantics stay identical across platforms.
+// interactive investigation surface. Both raw (unix) and fallback (non-unix)
+// readers feed interpretSequence so that navigation semantics stay identical
+// across platforms.
 type keyAction int
 
 const (
 	keyNone keyAction = iota
 	keyLeft
-	keyRight
 	keyScrollLeft
 	keyScrollRight
 	keyQuit
@@ -26,15 +26,13 @@ const (
 	keyEnter
 )
 
-// BrowsePage identifies the active surface of the browser.
+// BrowsePage identifies the active surface of the interactive investigation.
 type BrowsePage int
 
 const (
 	BrowseList BrowsePage = iota
 	BrowseDetail
 	BrowseActivity
-	// Deprecated aliases for v0.5.x compatibility.
-	BrowseOverview = BrowseList
 )
 
 const browsePageCount = 3
@@ -51,32 +49,16 @@ func (p BrowsePage) label() string {
 	return "?"
 }
 
-// cyclePage moves between surfaces with wraparound. Direction is -1 (left) or
-// +1 (right); any other value is treated as +1. Retained for compatibility
-// and horizontal navigation where applicable.
-func cyclePage(page BrowsePage, dir int) BrowsePage {
-	if dir != -1 {
-		dir = 1
-	}
-	n := int(page) + dir
-	switch {
-	case n < 0:
-		n = browsePageCount - 1
-	case n >= browsePageCount:
-		n = 0
-	}
-	return BrowsePage(n)
-}
-
 // interpretSequence normalizes a single input token into a keyAction. It
 // accepts literal key characters and ANSI escape sequences so the function
 // stays pure and unit-testable independent of terminal state.
+//
+// Navigation is hierarchical, not cyclic: Enter advances to a child surface,
+// ←/Esc return to the parent, and there is no wrap-around "next view" key.
 func interpretSequence(seq string) keyAction {
 	switch seq {
-	case "h", "\x1b[D":
+	case "\x1b[D":
 		return keyLeft
-	case "l", "\x1b[C":
-		return keyRight
 	case "H", "\x1b[1;2D", "\x1b[1;5D":
 		return keyScrollLeft
 	case "L", "\x1b[1;2C", "\x1b[1;5C":
@@ -390,8 +372,15 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 				b.render()
 			}
 		case keyEnter:
-			if b.page == BrowseList && b.selected >= 0 {
-				b.page = BrowseDetail
+			switch b.page {
+			case BrowseList:
+				if b.selected >= 0 {
+					b.page = BrowseDetail
+					b.offset = 0
+					b.render()
+				}
+			case BrowseDetail:
+				b.page = BrowseActivity
 				b.offset = 0
 				b.render()
 			}
@@ -408,14 +397,6 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 			case BrowseList:
 				// Left/Esc are not bound from the list; q or Ctrl+C quit.
 			}
-		case keyRight:
-			// In list, right could also enter detail; keep Enter as primary.
-			// For detail, right enters activity.
-			if b.page == BrowseDetail {
-				b.page = BrowseActivity
-				b.offset = 0
-				b.render()
-			}
 		case keyScrollLeft:
 			b.scroll(-max(1, b.viewport/2))
 			b.render()
@@ -425,22 +406,39 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 		case keyQuit:
 			return
 		}
-		// Horizontal scroll via Shift+arrows already handled; vertical via Up/Down.
 		// Unknown keys (keyNone) are ignored.
 	}
 }
 
-// Browse opens the interactive browser over the already discovered, enriched,
-// sorted, and filtered repository set, entered via `keen -i`. It answers the
-// two questions the flat CLI output leaves implicit: Overview shows what needs
-// attention (status, branch, upstream, ahead/behind); Activity shows what
-// happened (short hash, subject, relative time).
+// isTerminal reports whether stdin is attached to a character device (a real
+// terminal) rather than a pipe, file, or other redirected stream. It is the
+// portable gate between interactive rendering and the deterministic one-shot
+// overview: keeping control sequences out of redirected output relies on this
+// check on every platform, including those where makeRaw is a no-op.
+func isTerminal() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// Browse opens the interactive investigation surface over the already
+// discovered, enriched, sorted, and filtered repository set, entered via
+// `keen -i`. The hierarchy is List → Detail → Activity: Enter advances to a
+// child surface, ←/Esc return to the parent, and q/Ctrl+C quit from any level.
+// List is an addressable index; Detail shows one repository's full state;
+// Activity is contextual to the selected repository.
 //
 // Terminal handling uses the standard library only (no added dependencies).
-// When the input is not a terminal, makeRaw fails and Browse degrades to a
-// single static Overview render so the command still produces useful output.
+// When the input is not a terminal, Browse degrades to a single static List
+// render so the command still produces useful, portable output.
 func Browse(repos []Repository, totalDiscovered int) {
 	width := terminalWidth()
+	if !isTerminal() {
+		fmt.Print(renderBrowse(repos, totalDiscovered, BrowseList, width))
+		return
+	}
 	fd := int(os.Stdin.Fd())
 	if err := makeRaw(fd); err != nil {
 		fmt.Print(renderBrowse(repos, totalDiscovered, BrowseList, width))
@@ -488,8 +486,8 @@ func sliceViewport(s string, offset, width int) string {
 // renderBrowse assembles the full (untruncated) screen for a page. Width
 // controls only the header padding and the decorative rules; body lines are
 // rendered at full content width and revealed through the horizontal viewport
-// by the browser. This keeps the renderers independent of terminal state and
-// directly assertable in tests.
+// by the browserState renderer. This keeps the renderers independent of
+// terminal state and directly assertable in tests.
 func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, width int) string {
 	var sb strings.Builder
 	sb.WriteString("===KEEN===\n\n")
@@ -753,8 +751,8 @@ func shortHash(h string) string {
 
 // truncate shortens s to at most max runes, appending an ellipsis when the
 // content is longer. It is rune-aware so multi-byte characters are never
-// split mid-codepoint. Used by the static rich report; the interactive browser
-// relies on the horizontal viewport instead.
+// split mid-codepoint. Used by the static rich report; the interactive
+// investigation surface relies on the horizontal viewport instead.
 func truncate(s string, max int) string {
 	r := []rune(s)
 	if len(r) <= max {

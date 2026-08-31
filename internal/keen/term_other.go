@@ -18,9 +18,10 @@ func makeRaw(fd int) error {
 func restoreRaw(fd int) {}
 
 // readKey falls back to line-based input: one line equals one navigation
-// event. This keeps the browser usable (if awkward) on unsupported platforms
-// without pulling in a third-party terminal library. The boolean reports
-// whether the input stream is still alive; a false value ends the session.
+// event. This keeps the interactive investigation surface usable (if awkward) on
+// unsupported platforms without pulling in a third-party terminal library. The
+// boolean reports whether the input stream is still alive; a false value ends
+// the session.
 func readKey() (keyAction, bool) {
 	reader := bufio.NewReader(os.Stdin)
 	s, err := reader.ReadString('\n')
