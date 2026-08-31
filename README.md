@@ -51,13 +51,13 @@ Selecting a mode never changes which repositories are shown. `--clean`, `--dirty
 | Detail    | What is this repository?                 | name, path, status, branch, upstream, ahead, behind, last commit |
 | Activity  | What happened recently in this repository? | repository, hash, subject, relative time (selected repo)    |
 
-List is an addressable index: each row carries enough to select the correct repository. Detail shows the full repository path plus working state and synchronization. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none).
+List is an addressable index: each row carries enough to select the correct repository. Detail shows the full repository path plus working state and synchronization. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none). The three surfaces form a strict hierarchy (List → Detail → Activity): `Enter` descends one level, `←`/`Esc` ascend one level, and Activity is the deepest — pressing anything past it never wraps around to List.
 
 | Key             | Action                                  |
 | --------------- | --------------------------------------- |
 | `↑`/`↓`         | Move selection                          |
-| `Enter`         | Inspect the selected repository (List → Detail) |
-| `←`/`Esc`       | Return (Detail → List; Activity → Detail) |
+| `Enter`         | Advance to the child surface (List → Detail; Detail → Activity) |
+| `←`/`Esc`       | Return to the parent (Detail → List; Activity → Detail) |
 | `q` / `Ctrl+C`  | Quit                                    |
 
 A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 3`, etc.) identifies the active view and position. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.

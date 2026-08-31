@@ -1,7 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
+
+	"github.com/divijg19/Keen/internal/keen"
 )
 
 func TestParseArgsModeSelection(t *testing.T) {
@@ -119,5 +125,43 @@ func TestParseArgsCompactRemainsCanonicalOnly(t *testing.T) {
 		if _, err := parseArgs([]string{mode, "--dirty"}); err != nil {
 			t.Errorf("%s --dirty must remain valid: %v", mode, err)
 		}
+	}
+}
+
+// TestInteractiveNonTTYNoEscape verifies the portability contract: with stdin
+// redirected to a pipe (not a terminal), `keen -i` emits exactly one one-shot
+// List render with no terminal escape/control sequences and exits normally.
+// The subprocess re-executes the test binary with a helper flag so it observes
+// a real non-terminal stdin via os.Stdin.
+func TestInteractiveNonTTYNoEscape(t *testing.T) {
+	if os.Getenv("KEEN_NONTTY_HELPER") == "1" {
+		keen.Browse([]keen.Repository{{Name: "peony"}}, 1)
+		os.Exit(0)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	cmd := exec.Command(exe, "-test.run=TestInteractiveNonTTYNoEscape")
+	cmd.Env = append(os.Environ(), "KEEN_NONTTY_HELPER=1")
+	cmd.Stdin = strings.NewReader("")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("subprocess failed: %v\nstderr: %s", err, errb.String())
+	}
+
+	if out.Len() == 0 {
+		t.Fatal("expected one-shot List output, got none")
+	}
+	for _, r := range out.String() {
+		if r == '\x1b' || r == '\x03' || (r < 0x20 && r != '\n' && r != '\t' && r != '\r') {
+			t.Fatalf("terminal escape/control sequence leaked into non-TTY output: %q", r)
+		}
+	}
+	if !strings.Contains(out.String(), "‹ LIST ›") {
+		t.Errorf("one-shot output missing List header: %q", out.String())
 	}
 }
