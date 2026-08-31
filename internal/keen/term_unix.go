@@ -142,3 +142,17 @@ func terminalWidth() int {
 	}
 	return 80
 }
+
+func terminalHeight() int {
+	var ws winsize
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdin.Fd(), tiocgwinsz, uintptr(unsafe.Pointer(&ws)))
+	if errno == 0 && ws.Row > 0 {
+		return int(ws.Row)
+	}
+	if c := os.Getenv("LINES"); c != "" {
+		if n, convErr := strconv.Atoi(c); convErr == nil && n > 0 {
+			return n
+		}
+	}
+	return 24
+}

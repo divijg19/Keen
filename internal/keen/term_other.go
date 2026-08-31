@@ -44,3 +44,12 @@ func terminalWidth() int {
 	}
 	return 80
 }
+
+func terminalHeight() int {
+	if c := os.Getenv("LINES"); c != "" {
+		if n, err := strconv.Atoi(c); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 24
+}

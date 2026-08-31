@@ -3,7 +3,9 @@ package keen
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 )
 
 // keyAction is the normalized result of reading one user input event in the
@@ -19,24 +21,30 @@ const (
 	keyScrollRight
 	keyQuit
 	keyEsc
+	keyUp
+	keyDown
+	keyEnter
 )
 
-// BrowsePage identifies one horizontal surface of the browser. The v0.5.6
-// browser has exactly two pages; this is a closed enumeration, not an
-// extensible pagination mechanism.
+// BrowsePage identifies the active surface of the browser.
 type BrowsePage int
 
 const (
-	BrowseOverview BrowsePage = iota
+	BrowseList BrowsePage = iota
+	BrowseDetail
 	BrowseActivity
+	// Deprecated aliases for v0.5.x compatibility.
+	BrowseOverview = BrowseList
 )
 
-const browsePageCount = 2
+const browsePageCount = 3
 
 func (p BrowsePage) label() string {
 	switch p {
-	case BrowseOverview:
-		return "OVERVIEW"
+	case BrowseList:
+		return "LIST"
+	case BrowseDetail:
+		return "DETAIL"
 	case BrowseActivity:
 		return "ACTIVITY"
 	}
@@ -44,7 +52,8 @@ func (p BrowsePage) label() string {
 }
 
 // cyclePage moves between surfaces with wraparound. Direction is -1 (left) or
-// +1 (right); any other value is treated as +1.
+// +1 (right); any other value is treated as +1. Retained for compatibility
+// and horizontal navigation where applicable.
 func cyclePage(page BrowsePage, dir int) BrowsePage {
 	if dir != -1 {
 		dir = 1
@@ -60,9 +69,8 @@ func cyclePage(page BrowsePage, dir int) BrowsePage {
 }
 
 // interpretSequence normalizes a single input token into a keyAction. It
-// accepts literal key characters (h/l/q/H/L/Ctrl+C) and ANSI escape sequences
-// (including modified arrows) so the function stays pure and unit-testable
-// independent of terminal state.
+// accepts literal key characters and ANSI escape sequences so the function
+// stays pure and unit-testable independent of terminal state.
 func interpretSequence(seq string) keyAction {
 	switch seq {
 	case "h", "\x1b[D":
@@ -77,8 +85,12 @@ func interpretSequence(seq string) keyAction {
 		return keyQuit
 	case "\x1b":
 		return keyEsc
-	case "\x1b[A", "\x1b[B":
-		return keyNone
+	case "\x1b[A":
+		return keyUp
+	case "\x1b[B":
+		return keyDown
+	case "\r", "\n", "\x1bOM": // Enter: CR, LF, keypad Enter
+		return keyEnter
 	}
 	return keyNone
 }
@@ -94,19 +106,128 @@ const browseIndent = "    "
 const browseHeaderLine = 2
 
 // browserState holds the concrete, local view state for one interactive
-// session. It deliberately models the horizontal viewport as distinct values:
-// the active page (view), the full content width of that view, the terminal
-// width (viewport), and the horizontal offset into the content.
+// session. It deliberately models distinct values for selection, vertical
+// viewport, and horizontal viewport.
 type browserState struct {
-	repos    []Repository
-	total    int
-	page     BrowsePage
-	offset   int
-	viewport int
+	repos          []Repository
+	total          int
+	page           BrowsePage
+	selected       int // index of selected repo; -1 if none
+	listOffset     int // vertical viewport offset
+	offset         int // horizontal viewport offset
+	viewport       int // terminal width
+	viewportHeight int // terminal height
+}
+
+func newBrowserState(repos []Repository, total int) *browserState {
+	selected := -1
+	if len(repos) > 0 {
+		selected = 0
+	}
+	return &browserState{
+		repos:          repos,
+		total:          total,
+		page:           BrowseList,
+		selected:       selected,
+		viewport:       terminalWidth(),
+		viewportHeight: terminalHeight(),
+	}
+}
+
+func (b *browserState) clampSelection() {
+	if len(b.repos) == 0 {
+		b.selected = -1
+		b.listOffset = 0
+		return
+	}
+	if b.selected < 0 {
+		b.selected = 0
+	}
+	if b.selected >= len(b.repos) {
+		b.selected = len(b.repos) - 1
+	}
+}
+
+func (b *browserState) moveSelection(delta int) {
+	if len(b.repos) == 0 {
+		return
+	}
+	b.selected += delta
+	b.clampSelection()
+	b.ensureVisible()
+}
+
+func (b *browserState) ensureVisible() {
+	if len(b.repos) == 0 {
+		b.listOffset = 0
+		return
+	}
+	availableRows := b.availableRows()
+	if availableRows <= 0 {
+		availableRows = 1
+	}
+	// Ensure selected is within visible window.
+	if b.selected < b.listOffset {
+		b.listOffset = b.selected
+	}
+	if b.selected >= b.listOffset+availableRows {
+		b.listOffset = b.selected - availableRows + 1
+	}
+	// Clamp listOffset to valid range.
+	maxOffset := len(b.repos) - availableRows
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if b.listOffset < 0 {
+		b.listOffset = 0
+	}
+	if b.listOffset > maxOffset {
+		b.listOffset = maxOffset
+	}
+}
+
+func (b *browserState) availableRows() int {
+	// Banner (1) + blank (1) + header (1) + blank (1) + hint (1) + blank (1) = 6
+	// Detail/Activity have similar chrome. Keep conservative.
+	h := b.viewportHeight
+	if h <= 0 {
+		h = 24
+	}
+	avail := h - 6
+	if avail < 1 {
+		avail = 1
+	}
+	return avail
+}
+
+func (b *browserState) selectedRepo() *Repository {
+	if b.selected < 0 || b.selected >= len(b.repos) {
+		return nil
+	}
+	return &b.repos[b.selected]
 }
 
 func (b *browserState) contentWidth() int {
-	full := renderBrowse(b.repos, b.total, b.page, b.viewport)
+	// Width is determined by the current page's full content.
+	var full string
+	switch b.page {
+	case BrowseList:
+		full = b.renderListContent()
+	case BrowseDetail:
+		if repo := b.selectedRepo(); repo != nil {
+			full = renderDetail(*repo, b.viewport)
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	case BrowseActivity:
+		if repo := b.selectedRepo(); repo != nil {
+			full = renderActivityForSelected(*repo, b.viewport)
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	default:
+		full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+	}
 	max := 0
 	for _, line := range strings.Split(full, "\n") {
 		if w := len([]rune(line)); w > max {
@@ -131,7 +252,35 @@ func (b *browserState) scroll(delta int) {
 }
 
 func (b *browserState) render() {
-	full := renderBrowse(b.repos, b.total, b.page, b.viewport)
+	// Refresh viewport dimensions each render to avoid stale startup width.
+	b.viewport = terminalWidth()
+	b.viewportHeight = terminalHeight()
+	b.ensureVisible()
+
+	var full string
+	switch b.page {
+	case BrowseList:
+		full = b.renderListContent()
+	case BrowseDetail:
+		if repo := b.selectedRepo(); repo != nil {
+			full = renderDetail(*repo, b.viewport)
+			// Wrap detail with banner/header chrome for consistency.
+			header := b.renderHeader()
+			full = header + full
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	case BrowseActivity:
+		if repo := b.selectedRepo(); repo != nil {
+			full = renderActivityForSelected(*repo, b.viewport)
+			header := b.renderHeader()
+			full = header + full
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	default:
+		full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+	}
 	lines := strings.Split(full, "\n")
 	var out strings.Builder
 	for i, line := range lines {
@@ -151,6 +300,72 @@ func (b *browserState) render() {
 	fmt.Print(out.String())
 }
 
+func (b *browserState) renderHeader() string {
+	var sb strings.Builder
+	sb.WriteString("===KEEN===\n\n")
+	title := "‹ " + b.page.label() + " ›"
+	indicator := fmt.Sprintf("%d / %d", int(b.page)+1, browsePageCount)
+	pad := b.viewport - len([]rune(title)) - len([]rune(indicator))
+	if pad < 0 {
+		pad = 0
+	}
+	sb.WriteString(title)
+	sb.WriteString(strings.Repeat(" ", pad))
+	sb.WriteString(indicator)
+	sb.WriteString("\n\n")
+	return sb.String()
+}
+
+func (b *browserState) renderListContent() string {
+	var sb strings.Builder
+	sb.WriteString("===KEEN===\n\n")
+	title := "‹ " + b.page.label() + " ›"
+	indicator := fmt.Sprintf("%d / %d", int(b.page)+1, browsePageCount)
+	pad := b.viewport - len([]rune(title)) - len([]rune(indicator))
+	if pad < 0 {
+		pad = 0
+	}
+	sb.WriteString(title)
+	sb.WriteString(strings.Repeat(" ", pad))
+	sb.WriteString(indicator)
+	sb.WriteString("\n\n")
+
+	if len(b.repos) == 0 {
+		sb.WriteString(browseIndent + emptyMessage(b.total) + "\n\n")
+		sb.WriteString(browseIndent + "←/→ views    Shift+←/→ scroll    q quit\n")
+		return sb.String()
+	}
+
+	// Ensure selected visible before rendering.
+	b.ensureVisible()
+	availableRows := b.availableRows()
+	start := b.listOffset
+	end := start + availableRows
+	if end > len(b.repos) {
+		end = len(b.repos)
+	}
+
+	nameW, branchW, upstreamW := overviewWidths(b.viewport)
+	for i := start; i < end; i++ {
+		r := b.repos[i]
+		cursor := "  "
+		if i == b.selected {
+			cursor = "> "
+		}
+		// Compact row: identity, status, branch, upstream where appropriate.
+		row := fmt.Sprintf("%s%s[%-5s] %-*s %-*s %-*s %s",
+			browseIndent+cursor, "", statusOf(r),
+			nameW, r.Name,
+			branchW, overviewBranch(r),
+			upstreamW, overviewUpstream(r),
+			overviewAheadBehind(r))
+		sb.WriteString(row + "\n")
+	}
+	sb.WriteString("\n")
+	sb.WriteString(browseIndent + "↑/↓ select    Enter inspect    q quit\n")
+	return sb.String()
+}
+
 // run consumes input events until the user quits or the input stream ends.
 // The read function is injected so the navigation loop stays exercisable
 // without a terminal; production Browse passes readKey.
@@ -164,21 +379,54 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 			return
 		}
 		switch action {
-		case keyLeft:
-			b.page = cyclePage(b.page, -1)
-			b.render()
+		case keyUp:
+			if b.page == BrowseList {
+				b.moveSelection(-1)
+				b.render()
+			}
+		case keyDown:
+			if b.page == BrowseList {
+				b.moveSelection(1)
+				b.render()
+			}
+		case keyEnter:
+			if b.page == BrowseList && b.selected >= 0 {
+				b.page = BrowseDetail
+				b.offset = 0
+				b.render()
+			}
+		case keyLeft, keyEsc:
+			switch b.page {
+			case BrowseDetail:
+				b.page = BrowseList
+				b.offset = 0
+				b.render()
+			case BrowseActivity:
+				b.page = BrowseDetail
+				b.offset = 0
+				b.render()
+			case BrowseList:
+				// Left/Esc are not bound from the list; q or Ctrl+C quit.
+			}
 		case keyRight:
-			b.page = cyclePage(b.page, 1)
-			b.render()
+			// In list, right could also enter detail; keep Enter as primary.
+			// For detail, right enters activity.
+			if b.page == BrowseDetail {
+				b.page = BrowseActivity
+				b.offset = 0
+				b.render()
+			}
 		case keyScrollLeft:
 			b.scroll(-max(1, b.viewport/2))
 			b.render()
 		case keyScrollRight:
 			b.scroll(max(1, b.viewport/2))
 			b.render()
-		case keyQuit, keyEsc:
+		case keyQuit:
 			return
 		}
+		// Horizontal scroll via Shift+arrows already handled; vertical via Up/Down.
+		// Unknown keys (keyNone) are ignored.
 	}
 }
 
@@ -195,18 +443,25 @@ func Browse(repos []Repository, totalDiscovered int) {
 	width := terminalWidth()
 	fd := int(os.Stdin.Fd())
 	if err := makeRaw(fd); err != nil {
-		fmt.Print(renderBrowse(repos, totalDiscovered, BrowseOverview, width))
+		fmt.Print(renderBrowse(repos, totalDiscovered, BrowseList, width))
 		return
 	}
 	defer restoreRaw(fd)
 
-	state := &browserState{
-		repos:    repos,
-		total:    totalDiscovered,
-		page:     BrowseOverview,
-		offset:   0,
-		viewport: width,
-	}
+	// Minimal signal protection for raw terminal: restore on SIGTERM/SIGHUP.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-sigCh
+		restoreRaw(fd)
+		// Use raw syscall exit to avoid running other defers that might clear again.
+		syscall.Exit(1)
+	}()
+	defer signal.Stop(sigCh)
+
+	state := newBrowserState(repos, totalDiscovered)
+	state.viewport = width
+	state.viewportHeight = terminalHeight()
 	state.render()
 	state.run(readKey)
 }
@@ -251,14 +506,29 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 	sb.WriteString("\n\n")
 
 	switch page {
-	case BrowseOverview:
+	case BrowseList:
 		sb.WriteString(renderOverview(repos, totalDiscovered, width))
+	case BrowseDetail:
+		// Detail via browse's contextual renderer; fallback to overview for tests.
+		if len(repos) > 0 {
+			sb.WriteString(renderDetail(repos[0], width))
+		} else {
+			sb.WriteString(renderOverview(repos, totalDiscovered, width))
+		}
 	case BrowseActivity:
 		sb.WriteString(renderActivity(repos, totalDiscovered, width))
+	default:
+		sb.WriteString(renderOverview(repos, totalDiscovered, width))
 	}
 
-	sb.WriteString("\n")
-	sb.WriteString(browseIndent + "←/→ views    Shift+←/→ scroll    q quit\n")
+	var hint string
+	switch page {
+	case BrowseList:
+		hint = "↑/↓ select    Enter inspect    q quit"
+	case BrowseDetail, BrowseActivity:
+		hint = "←/Esc back    q quit"
+	}
+	sb.WriteString(browseIndent + hint + "\n")
 	return sb.String()
 }
 
@@ -350,6 +620,52 @@ func activityEntry(r Repository) string {
 
 	sb.WriteString(browseIndent + "  " + shortHash(r.LastCommitHash) + "  " + r.LastCommitSubject + "\n")
 	sb.WriteString(browseIndent + "  " + r.LastCommitTime + "\n")
+	return sb.String()
+}
+
+// renderDetail renders the bounded repository detail view for one selected
+// repository. It consumes only existing Repository facts.
+func renderDetail(repo Repository, width int) string {
+	var sb strings.Builder
+	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n")
+	sb.WriteString(browseIndent + "Path:       " + repo.Path + "\n")
+	status := statusOf(repo)
+	sb.WriteString(browseIndent + "Status:     " + status + "\n")
+	branch := overviewBranch(repo)
+	sb.WriteString(browseIndent + "Branch:     " + branch + "\n")
+	upstream := overviewUpstream(repo)
+	sb.WriteString(browseIndent + "Upstream:   " + upstream + "\n")
+	// Ahead/Behind honest handling.
+	ahead, behind := "–", "–"
+	if repo.Upstream != "" {
+		ahead = fmt.Sprintf("%d", repo.Ahead)
+		behind = fmt.Sprintf("%d", repo.Behind)
+	}
+	sb.WriteString(browseIndent + "Ahead:      " + ahead + "\n")
+	sb.WriteString(browseIndent + "Behind:     " + behind + "\n")
+	sb.WriteString(browseIndent + "Last commit:\n")
+	if repo.LastCommitHash == "" {
+		sb.WriteString(browseIndent + "  No commits\n")
+	} else {
+		sb.WriteString(browseIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
+		sb.WriteString(browseIndent + "  " + repo.LastCommitTime + "\n")
+	}
+	// Use width to avoid accidental wrapping; detail relies on horizontal viewport.
+	_ = width
+	return sb.String()
+}
+
+// renderActivityForSelected renders Activity contextual to the selected repository.
+func renderActivityForSelected(repo Repository, width int) string {
+	var sb strings.Builder
+	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n\n")
+	if repo.LastCommitHash == "" {
+		sb.WriteString(browseIndent + "  No commits\n")
+		return sb.String()
+	}
+	sb.WriteString(browseIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
+	sb.WriteString(browseIndent + "  " + repo.LastCommitTime + "\n")
+	_ = width
 	return sb.String()
 }
 
