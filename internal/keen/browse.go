@@ -33,9 +33,12 @@ const (
 	BrowseList BrowsePage = iota
 	BrowseDetail
 	BrowseActivity
+	BrowseCommitHistory
+	BrowseCommitDetail
+	BrowseChangedFiles
 )
 
-const browsePageCount = 3
+const browsePageCount = 6
 
 func (p BrowsePage) label() string {
 	switch p {
@@ -45,6 +48,12 @@ func (p BrowsePage) label() string {
 		return "DETAIL"
 	case BrowseActivity:
 		return "ACTIVITY"
+	case BrowseCommitHistory:
+		return "HISTORY"
+	case BrowseCommitDetail:
+		return "COMMIT"
+	case BrowseChangedFiles:
+		return "FILES"
 	}
 	return "?"
 }
@@ -91,14 +100,21 @@ const browseHeaderLine = 2
 // session. It deliberately models distinct values for selection, vertical
 // viewport, and horizontal viewport.
 type browserState struct {
-	repos          []Repository
-	total          int
-	page           BrowsePage
-	selected       int // index of selected repo; -1 if none
-	listOffset     int // vertical viewport offset
-	offset         int // horizontal viewport offset
-	viewport       int // terminal width
-	viewportHeight int // terminal height
+	repos              []Repository
+	total              int
+	page               BrowsePage
+	selected           int // index of selected repo; -1 if none
+	listOffset         int // vertical viewport offset
+	offset             int // horizontal viewport offset
+	viewport           int // terminal width
+	viewportHeight     int // terminal height
+	history            []Commit
+	selectedCommit     int // index of selected commit; -1 if none
+	historyOffset      int // vertical viewport offset for commit history
+	changedFiles       []ChangedFile
+	changedFilesOffset int
+	historyErr         string
+	changedFilesErr    string
 }
 
 func newBrowserState(repos []Repository, total int) *browserState {
@@ -111,6 +127,7 @@ func newBrowserState(repos []Repository, total int) *browserState {
 		total:          total,
 		page:           BrowseList,
 		selected:       selected,
+		selectedCommit: -1,
 		viewport:       terminalWidth(),
 		viewportHeight: terminalHeight(),
 	}
@@ -182,6 +199,105 @@ func (b *browserState) availableRows() int {
 	return avail
 }
 
+func (b *browserState) clampCommitSelection() {
+	if len(b.history) == 0 {
+		b.selectedCommit = -1
+		b.historyOffset = 0
+		return
+	}
+	if b.selectedCommit < 0 {
+		b.selectedCommit = 0
+	}
+	if b.selectedCommit >= len(b.history) {
+		b.selectedCommit = len(b.history) - 1
+	}
+}
+
+func (b *browserState) moveCommitSelection(delta int) {
+	if len(b.history) == 0 {
+		return
+	}
+	b.selectedCommit += delta
+	b.clampCommitSelection()
+	b.ensureCommitVisible()
+}
+
+func (b *browserState) ensureCommitVisible() {
+	if len(b.history) == 0 {
+		b.historyOffset = 0
+		return
+	}
+	availableRows := b.availableRows()
+	if availableRows <= 0 {
+		availableRows = 1
+	}
+	if b.selectedCommit < b.historyOffset {
+		b.historyOffset = b.selectedCommit
+	}
+	if b.selectedCommit >= b.historyOffset+availableRows {
+		b.historyOffset = b.selectedCommit - availableRows + 1
+	}
+	maxOffset := len(b.history) - availableRows
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if b.historyOffset < 0 {
+		b.historyOffset = 0
+	}
+	if b.historyOffset > maxOffset {
+		b.historyOffset = maxOffset
+	}
+}
+
+func (b *browserState) selectedCommitObj() *Commit {
+	if b.selectedCommit < 0 || b.selectedCommit >= len(b.history) {
+		return nil
+	}
+	return &b.history[b.selectedCommit]
+}
+
+func (b *browserState) loadHistoryForSelected() {
+	b.history = nil
+	b.selectedCommit = -1
+	b.historyOffset = 0
+	b.historyErr = ""
+	b.changedFiles = nil
+	b.changedFilesOffset = 0
+	b.changedFilesErr = ""
+	repo := b.selectedRepo()
+	if repo == nil {
+		return
+	}
+	commits, err := loadCommitHistory(repo.Path)
+	if err != nil {
+		b.historyErr = err.Error()
+		return
+	}
+	b.history = commits
+	if len(commits) > 0 {
+		b.selectedCommit = 0
+	} else {
+		b.selectedCommit = -1
+	}
+}
+
+func (b *browserState) loadChangedFilesForSelectedCommit() {
+	b.changedFiles = nil
+	b.changedFilesOffset = 0
+	b.changedFilesErr = ""
+	repo := b.selectedRepo()
+	commit := b.selectedCommitObj()
+	if repo == nil || commit == nil {
+		return
+	}
+	files, err := loadChangedFiles(repo.Path, commit.Hash)
+	if err != nil {
+		b.changedFilesErr = err.Error()
+		return
+	}
+	b.changedFiles = files
+}
+
 func (b *browserState) selectedRepo() *Repository {
 	if b.selected < 0 || b.selected >= len(b.repos) {
 		return nil
@@ -204,6 +320,28 @@ func (b *browserState) contentWidth() int {
 	case BrowseActivity:
 		if repo := b.selectedRepo(); repo != nil {
 			full = renderActivityForSelected(*repo, b.viewport)
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	case BrowseCommitHistory:
+		full = b.renderCommitHistoryContent()
+	case BrowseCommitDetail:
+		if c := b.selectedCommitObj(); c != nil {
+			if repo := b.selectedRepo(); repo != nil {
+				full = renderCommitDetail(*repo, *c, b.viewport)
+			} else {
+				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+			}
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	case BrowseChangedFiles:
+		if c := b.selectedCommitObj(); c != nil {
+			if repo := b.selectedRepo(); repo != nil {
+				full = renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr, b.viewport)
+			} else {
+				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+			}
 		} else {
 			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 		}
@@ -238,6 +376,9 @@ func (b *browserState) render() {
 	b.viewport = terminalWidth()
 	b.viewportHeight = terminalHeight()
 	b.ensureVisible()
+	if b.page == BrowseCommitHistory {
+		b.ensureCommitVisible()
+	}
 
 	var full string
 	switch b.page {
@@ -257,6 +398,32 @@ func (b *browserState) render() {
 			full = renderActivityForSelected(*repo, b.viewport)
 			header := b.renderHeader()
 			full = header + full
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	case BrowseCommitHistory:
+		full = b.renderCommitHistoryContent()
+	case BrowseCommitDetail:
+		if c := b.selectedCommitObj(); c != nil {
+			if repo := b.selectedRepo(); repo != nil {
+				full = renderCommitDetail(*repo, *c, b.viewport)
+				header := b.renderHeader()
+				full = header + full
+			} else {
+				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+			}
+		} else {
+			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+		}
+	case BrowseChangedFiles:
+		if c := b.selectedCommitObj(); c != nil {
+			if repo := b.selectedRepo(); repo != nil {
+				full = renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr, b.viewport)
+				header := b.renderHeader()
+				full = header + full
+			} else {
+				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
+			}
 		} else {
 			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 		}
@@ -348,6 +515,106 @@ func (b *browserState) renderListContent() string {
 	return sb.String()
 }
 
+func (b *browserState) renderCommitHistoryContent() string {
+	var sb strings.Builder
+	sb.WriteString("===KEEN===\n\n")
+	title := "‹ " + b.page.label() + " ›"
+	indicator := fmt.Sprintf("%d / %d", int(b.page)+1, browsePageCount)
+	pad := b.viewport - len([]rune(title)) - len([]rune(indicator))
+	if pad < 0 {
+		pad = 0
+	}
+	sb.WriteString(title)
+	sb.WriteString(strings.Repeat(" ", pad))
+	sb.WriteString(indicator)
+	sb.WriteString("\n\n")
+
+	repo := b.selectedRepo()
+	if repo == nil {
+		sb.WriteString(browseIndent + "No repository selected.\n\n")
+		sb.WriteString(browseIndent + "←/Esc back    q quit\n")
+		return sb.String()
+	}
+	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n\n")
+	if b.historyErr != "" {
+		sb.WriteString(browseIndent + "Failed to load history: " + b.historyErr + "\n\n")
+		sb.WriteString(browseIndent + "←/Esc back    q quit\n")
+		return sb.String()
+	}
+	if len(b.history) == 0 {
+		sb.WriteString(browseIndent + "No commits.\n\n")
+		sb.WriteString(browseIndent + "←/Esc back    q quit\n")
+		return sb.String()
+	}
+	b.ensureCommitVisible()
+	availableRows := b.availableRows()
+	start := b.historyOffset
+	end := start + availableRows
+	if end > len(b.history) {
+		end = len(b.history)
+	}
+	for i := start; i < end; i++ {
+		c := b.history[i]
+		cursor := "  "
+		if i == b.selectedCommit {
+			cursor = "> "
+		}
+		row := fmt.Sprintf("%s%s%s  %s  %s", browseIndent+cursor, shortHash(c.Hash), " ", c.Subject, c.AuthorDate)
+		// Simplified row; horizontal viewport reveals overflow.
+		sb.WriteString(row + "\n")
+	}
+	sb.WriteString("\n")
+	sb.WriteString(browseIndent + "↑/↓ select    Enter detail    ←/Esc back    q quit\n")
+	return sb.String()
+}
+
+func renderCommitDetail(repo Repository, c Commit, width int) string {
+	var sb strings.Builder
+	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n")
+	sb.WriteString(browseIndent + "Commit:     " + c.Hash + "\n")
+	sb.WriteString(browseIndent + "Author:     " + c.Author + " <" + c.AuthorDate + ">\n")
+	sb.WriteString(browseIndent + "Committer:  " + c.Committer + " <" + c.CommitterDate + ">\n")
+	if len(c.Parents) == 0 {
+		sb.WriteString(browseIndent + "Parents:    (none - root commit)\n")
+	} else {
+		sb.WriteString(browseIndent + "Parents:    " + strings.Join(c.Parents, " ") + "\n")
+	}
+	sb.WriteString(browseIndent + "Subject:    " + c.Subject + "\n")
+	if strings.TrimSpace(c.Body) != "" {
+		sb.WriteString(browseIndent + "Body:\n")
+		for _, line := range strings.Split(c.Body, "\n") {
+			sb.WriteString(browseIndent + "  " + line + "\n")
+		}
+	}
+	_ = width
+	return sb.String()
+}
+
+func renderChangedFilesForCommit(repo Repository, c Commit, files []ChangedFile, filesErr string, width int) string {
+	var sb strings.Builder
+	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n")
+	sb.WriteString(browseIndent + "Commit:     " + shortHash(c.Hash) + "  " + c.Subject + "\n\n")
+	if filesErr != "" {
+		sb.WriteString(browseIndent + "Failed to load changed files: " + filesErr + "\n")
+		_ = width
+		return sb.String()
+	}
+	if len(files) == 0 {
+		sb.WriteString(browseIndent + "No files changed.\n")
+		_ = width
+		return sb.String()
+	}
+	for _, f := range files {
+		if f.OldPath != "" {
+			sb.WriteString(browseIndent + f.Status + "  " + f.OldPath + " -> " + f.Path + "\n")
+		} else {
+			sb.WriteString(browseIndent + f.Status + "  " + f.Path + "\n")
+		}
+	}
+	_ = width
+	return sb.String()
+}
+
 // run consumes input events until the user quits or the input stream ends.
 // The read function is injected so the navigation loop stays exercisable
 // without a terminal; production Browse passes readKey.
@@ -362,13 +629,21 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 		}
 		switch action {
 		case keyUp:
-			if b.page == BrowseList {
+			switch b.page {
+			case BrowseList:
 				b.moveSelection(-1)
+				b.render()
+			case BrowseCommitHistory:
+				b.moveCommitSelection(-1)
 				b.render()
 			}
 		case keyDown:
-			if b.page == BrowseList {
+			switch b.page {
+			case BrowseList:
 				b.moveSelection(1)
+				b.render()
+			case BrowseCommitHistory:
+				b.moveCommitSelection(1)
 				b.render()
 			}
 		case keyEnter:
@@ -383,6 +658,22 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 				b.page = BrowseActivity
 				b.offset = 0
 				b.render()
+			case BrowseActivity:
+				b.loadHistoryForSelected()
+				b.page = BrowseCommitHistory
+				b.offset = 0
+				b.render()
+			case BrowseCommitHistory:
+				if b.selectedCommit >= 0 && b.selectedCommit < len(b.history) {
+					b.page = BrowseCommitDetail
+					b.offset = 0
+					b.render()
+				}
+			case BrowseCommitDetail:
+				b.loadChangedFilesForSelectedCommit()
+				b.page = BrowseChangedFiles
+				b.offset = 0
+				b.render()
 			}
 		case keyLeft, keyEsc:
 			switch b.page {
@@ -392,6 +683,18 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 				b.render()
 			case BrowseActivity:
 				b.page = BrowseDetail
+				b.offset = 0
+				b.render()
+			case BrowseCommitHistory:
+				b.page = BrowseActivity
+				b.offset = 0
+				b.render()
+			case BrowseCommitDetail:
+				b.page = BrowseCommitHistory
+				b.offset = 0
+				b.render()
+			case BrowseChangedFiles:
+				b.page = BrowseCommitDetail
 				b.offset = 0
 				b.render()
 			case BrowseList:
@@ -515,6 +818,12 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 		}
 	case BrowseActivity:
 		sb.WriteString(renderActivity(repos, totalDiscovered, width))
+	case BrowseCommitHistory:
+		sb.WriteString(browseIndent + "Commit history requires interactive selection.\n")
+	case BrowseCommitDetail:
+		sb.WriteString(browseIndent + "Commit detail requires interactive selection.\n")
+	case BrowseChangedFiles:
+		sb.WriteString(browseIndent + "Changed files require interactive selection.\n")
 	default:
 		sb.WriteString(renderOverview(repos, totalDiscovered, width))
 	}
@@ -524,6 +833,12 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 	case BrowseList:
 		hint = "↑/↓ select    Enter inspect    q quit"
 	case BrowseDetail, BrowseActivity:
+		hint = "←/Esc back    q quit"
+	case BrowseCommitHistory:
+		hint = "↑/↓ select    Enter detail    ←/Esc back    q quit"
+	case BrowseCommitDetail:
+		hint = "Enter files    ←/Esc back    q quit"
+	case BrowseChangedFiles:
 		hint = "←/Esc back    q quit"
 	}
 	sb.WriteString(browseIndent + hint + "\n")

@@ -43,24 +43,27 @@ Selecting a mode never changes which repositories are shown. `--clean`, `--dirty
 
 ## Interactive mode
 
-`keen -i` presents three surfaces:
+`keen -i` presents six investigative surfaces:
 
-| Surface   | Answers                                  | Shows                                                        |
-| --------- | ---------------------------------------- | ------------------------------------------------------------ |
-| List      | Which repositories exist?                | identity, status, branch, upstream/synchronization            |
-| Detail    | What is this repository?                 | name, path, status, branch, upstream, ahead, behind, last commit |
-| Activity  | What happened recently in this repository? | repository, hash, subject, relative time (selected repo)    |
+| Surface        | Answers                                    | Shows                                                        |
+| -------------- | ------------------------------------------ | ------------------------------------------------------------ |
+| List           | Which repositories exist?                  | identity, status, branch, upstream/synchronization            |
+| Detail         | What is this repository?                   | name, path, status, branch, upstream, ahead, behind, last commit |
+| Activity       | What happened recently in this repository? | repository, hash, subject, relative time (selected repo)    |
+| Commit History | What happened before the latest commit?    | recent commits (hash, subject, author, date)                |
+| Commit Detail  | Which commit am I looking at?              | full hash, subject, body, author, dates, parents             |
+| Changed Files  | What files did this commit change?         | change status (A/M/D/R) and path(s)                          |
 
-List is an addressable index: each row carries enough to select the correct repository. Detail shows the full repository path plus working state and synchronization. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none). The three surfaces form a strict hierarchy (List → Detail → Activity): `Enter` descends one level, `←`/`Esc` ascend one level, and Activity is the deepest — pressing anything past it never wraps around to List.
+List is an addressable index: each row carries enough to select the correct repository. Detail shows the full repository path plus working state and synchronization. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none). The surfaces form a strict hierarchy (`List → Detail → Activity → Commit History → Commit Detail → Changed Files`): `Enter` descends one level, `←`/`Esc` ascend one level, and Changed Files is the deepest — pressing anything past it never wraps around to List.
 
 | Key             | Action                                  |
 | --------------- | --------------------------------------- |
 | `↑`/`↓`         | Move selection                          |
-| `Enter`         | Advance to the child surface (List → Detail; Detail → Activity) |
-| `←`/`Esc`       | Return to the parent (Detail → List; Activity → Detail) |
+| `Enter`         | Advance to the child surface (List → Detail → Activity → Commit History → Commit Detail → Changed Files) |
+| `←`/`Esc`       | Return to the parent (Changed Files → Commit Detail → Commit History → Activity → Detail → List) |
 | `q` / `Ctrl+C`  | Quit                                    |
 
-A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 3`, etc.) identifies the active view and position. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.
+A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 6`, etc.) identifies the active view and position. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.
 
 When stdin is not a terminal (e.g. `keen -i < input`), `keen -i` prints a one-shot overview and exits, preserving script compatibility.
 
