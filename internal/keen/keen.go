@@ -2,6 +2,11 @@ package keen
 
 import "time"
 
+// reportIndent is the shared content indentation applied by every report and
+// investigation renderer. Both the textual reports and the interactive
+// surfaces use the same leading indent so their output aligns consistently.
+const reportIndent = "    "
+
 // Repository is the central domain model for a discovered Git repository.
 // Its fields are intentionally minimal and stable across the v0.4.x / v0.5.x line.
 //

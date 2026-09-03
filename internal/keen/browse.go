@@ -86,8 +86,6 @@ func interpretSequence(seq string) keyAction {
 	return keyNone
 }
 
-const browseIndent = "    "
-
 // browseHeaderLine is the index of the view-indicator header within the screen
 // produced by renderBrowse. The layout contract is fixed: renderBrowse emits
 // the banner (line 0), a blank separator (line 1), then the header carrying
@@ -95,6 +93,12 @@ const browseIndent = "    "
 // exactly this line exempt from horizontal slicing so the active view remains
 // identifiable at every offset; only body content scrolls.
 const browseHeaderLine = 2
+
+// browseChromeRows is the fixed count of vertical chrome rows occupied by the
+// banner, separators, header, and hint on every interactive page. availableRows
+// reserves this many rows before laying out selectable body content so the
+// chrome never overlaps the visible selection window.
+const browseChromeRows = 6
 
 // browserState holds the concrete, local view state for one interactive
 // session. It deliberately models distinct values for selection, vertical
@@ -186,13 +190,11 @@ func (b *browserState) ensureVisible() {
 }
 
 func (b *browserState) availableRows() int {
-	// Banner (1) + blank (1) + header (1) + blank (1) + hint (1) + blank (1) = 6
-	// Detail/Activity have similar chrome. Keep conservative.
 	h := b.viewportHeight
 	if h <= 0 {
 		h = 24
 	}
-	avail := h - 6
+	avail := h - browseChromeRows
 	if avail < 1 {
 		avail = 1
 	}
@@ -328,7 +330,7 @@ func (b *browserState) contentWidth() int {
 	case BrowseCommitDetail:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				full = renderCommitDetail(*repo, *c, b.viewport)
+				full = renderCommitDetail(*repo, *c)
 			} else {
 				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 			}
@@ -338,7 +340,7 @@ func (b *browserState) contentWidth() int {
 	case BrowseChangedFiles:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				full = renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr, b.viewport)
+				full = renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr)
 			} else {
 				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 			}
@@ -406,7 +408,7 @@ func (b *browserState) render() {
 	case BrowseCommitDetail:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				full = renderCommitDetail(*repo, *c, b.viewport)
+				full = renderCommitDetail(*repo, *c)
 				header := b.renderHeader()
 				full = header + full
 			} else {
@@ -418,7 +420,7 @@ func (b *browserState) render() {
 	case BrowseChangedFiles:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				full = renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr, b.viewport)
+				full = renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr)
 				header := b.renderHeader()
 				full = header + full
 			} else {
@@ -450,38 +452,18 @@ func (b *browserState) render() {
 }
 
 func (b *browserState) renderHeader() string {
-	var sb strings.Builder
-	sb.WriteString("===KEEN===\n\n")
-	title := "‹ " + b.page.label() + " ›"
-	indicator := fmt.Sprintf("%d / %d", int(b.page)+1, browsePageCount)
-	pad := b.viewport - len([]rune(title)) - len([]rune(indicator))
-	if pad < 0 {
-		pad = 0
-	}
-	sb.WriteString(title)
-	sb.WriteString(strings.Repeat(" ", pad))
-	sb.WriteString(indicator)
-	sb.WriteString("\n\n")
-	return sb.String()
+	return renderBannerAndHeader(b.page, b.viewport)
 }
 
+// renderListContent renders the List surface, prefixed by the shared banner
+// and active-view header.
 func (b *browserState) renderListContent() string {
 	var sb strings.Builder
-	sb.WriteString("===KEEN===\n\n")
-	title := "‹ " + b.page.label() + " ›"
-	indicator := fmt.Sprintf("%d / %d", int(b.page)+1, browsePageCount)
-	pad := b.viewport - len([]rune(title)) - len([]rune(indicator))
-	if pad < 0 {
-		pad = 0
-	}
-	sb.WriteString(title)
-	sb.WriteString(strings.Repeat(" ", pad))
-	sb.WriteString(indicator)
-	sb.WriteString("\n\n")
+	sb.WriteString(renderBannerAndHeader(b.page, b.viewport))
 
 	if len(b.repos) == 0 {
-		sb.WriteString(browseIndent + emptyMessage(b.total) + "\n\n")
-		sb.WriteString(browseIndent + "←/→ views    Shift+←/→ scroll    q quit\n")
+		sb.WriteString(reportIndent + emptyMessage(b.total) + "\n\n")
+		sb.WriteString(reportIndent + "←/→ views    Shift+←/→ scroll    q quit\n")
 		return sb.String()
 	}
 
@@ -503,47 +485,37 @@ func (b *browserState) renderListContent() string {
 		}
 		// Compact row: identity, status, branch, upstream where appropriate.
 		row := fmt.Sprintf("%s%s[%-5s] %-*s %-*s %-*s %s",
-			browseIndent+cursor, "", statusOf(r),
+			reportIndent+cursor, "", repoStatus(r),
 			nameW, r.Name,
-			branchW, overviewBranch(r),
-			upstreamW, overviewUpstream(r),
-			overviewAheadBehind(r))
+			branchW, branchLabel(r),
+			upstreamW, upstreamLabel(r),
+			aheadBehindLabel(r))
 		sb.WriteString(row + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(browseIndent + "↑/↓ select    Enter inspect    q quit\n")
+	sb.WriteString(reportIndent + "↑/↓ select    Enter inspect    q quit\n")
 	return sb.String()
 }
 
 func (b *browserState) renderCommitHistoryContent() string {
 	var sb strings.Builder
-	sb.WriteString("===KEEN===\n\n")
-	title := "‹ " + b.page.label() + " ›"
-	indicator := fmt.Sprintf("%d / %d", int(b.page)+1, browsePageCount)
-	pad := b.viewport - len([]rune(title)) - len([]rune(indicator))
-	if pad < 0 {
-		pad = 0
-	}
-	sb.WriteString(title)
-	sb.WriteString(strings.Repeat(" ", pad))
-	sb.WriteString(indicator)
-	sb.WriteString("\n\n")
+	sb.WriteString(renderBannerAndHeader(b.page, b.viewport))
 
 	repo := b.selectedRepo()
 	if repo == nil {
-		sb.WriteString(browseIndent + "No repository selected.\n\n")
-		sb.WriteString(browseIndent + "←/Esc back    q quit\n")
+		sb.WriteString(reportIndent + "No repository selected.\n\n")
+		sb.WriteString(reportIndent + "←/Esc back    q quit\n")
 		return sb.String()
 	}
-	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n\n")
+	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n\n")
 	if b.historyErr != "" {
-		sb.WriteString(browseIndent + "Failed to load history: " + b.historyErr + "\n\n")
-		sb.WriteString(browseIndent + "←/Esc back    q quit\n")
+		sb.WriteString(reportIndent + "Failed to load history: " + b.historyErr + "\n\n")
+		sb.WriteString(reportIndent + "←/Esc back    q quit\n")
 		return sb.String()
 	}
 	if len(b.history) == 0 {
-		sb.WriteString(browseIndent + "No commits.\n\n")
-		sb.WriteString(browseIndent + "←/Esc back    q quit\n")
+		sb.WriteString(reportIndent + "No commits.\n\n")
+		sb.WriteString(reportIndent + "←/Esc back    q quit\n")
 		return sb.String()
 	}
 	b.ensureCommitVisible()
@@ -559,59 +531,55 @@ func (b *browserState) renderCommitHistoryContent() string {
 		if i == b.selectedCommit {
 			cursor = "> "
 		}
-		row := fmt.Sprintf("%s%s%s  %s  %s", browseIndent+cursor, shortHash(c.Hash), " ", c.Subject, c.AuthorDate)
+		row := fmt.Sprintf("%s%s%s  %s  %s", reportIndent+cursor, shortHash(c.Hash), " ", c.Subject, c.AuthorDate)
 		// Simplified row; horizontal viewport reveals overflow.
 		sb.WriteString(row + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(browseIndent + "↑/↓ select    Enter detail    ←/Esc back    q quit\n")
+	sb.WriteString(reportIndent + "↑/↓ select    Enter detail    ←/Esc back    q quit\n")
 	return sb.String()
 }
 
-func renderCommitDetail(repo Repository, c Commit, width int) string {
+func renderCommitDetail(repo Repository, c Commit) string {
 	var sb strings.Builder
-	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n")
-	sb.WriteString(browseIndent + "Commit:     " + c.Hash + "\n")
-	sb.WriteString(browseIndent + "Author:     " + c.Author + " <" + c.AuthorDate + ">\n")
-	sb.WriteString(browseIndent + "Committer:  " + c.Committer + " <" + c.CommitterDate + ">\n")
+	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n")
+	sb.WriteString(reportIndent + "Commit:     " + c.Hash + "\n")
+	sb.WriteString(reportIndent + "Author:     " + c.Author + " <" + c.AuthorDate + ">\n")
+	sb.WriteString(reportIndent + "Committer:  " + c.Committer + " <" + c.CommitterDate + ">\n")
 	if len(c.Parents) == 0 {
-		sb.WriteString(browseIndent + "Parents:    (none - root commit)\n")
+		sb.WriteString(reportIndent + "Parents:    (none - root commit)\n")
 	} else {
-		sb.WriteString(browseIndent + "Parents:    " + strings.Join(c.Parents, " ") + "\n")
+		sb.WriteString(reportIndent + "Parents:    " + strings.Join(c.Parents, " ") + "\n")
 	}
-	sb.WriteString(browseIndent + "Subject:    " + c.Subject + "\n")
+	sb.WriteString(reportIndent + "Subject:    " + c.Subject + "\n")
 	if strings.TrimSpace(c.Body) != "" {
-		sb.WriteString(browseIndent + "Body:\n")
+		sb.WriteString(reportIndent + "Body:\n")
 		for _, line := range strings.Split(c.Body, "\n") {
-			sb.WriteString(browseIndent + "  " + line + "\n")
+			sb.WriteString(reportIndent + "  " + line + "\n")
 		}
 	}
-	_ = width
 	return sb.String()
 }
 
-func renderChangedFilesForCommit(repo Repository, c Commit, files []ChangedFile, filesErr string, width int) string {
+func renderChangedFilesForCommit(repo Repository, c Commit, files []ChangedFile, filesErr string) string {
 	var sb strings.Builder
-	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n")
-	sb.WriteString(browseIndent + "Commit:     " + shortHash(c.Hash) + "  " + c.Subject + "\n\n")
+	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n")
+	sb.WriteString(reportIndent + "Commit:     " + shortHash(c.Hash) + "  " + c.Subject + "\n\n")
 	if filesErr != "" {
-		sb.WriteString(browseIndent + "Failed to load changed files: " + filesErr + "\n")
-		_ = width
+		sb.WriteString(reportIndent + "Failed to load changed files: " + filesErr + "\n")
 		return sb.String()
 	}
 	if len(files) == 0 {
-		sb.WriteString(browseIndent + "No files changed.\n")
-		_ = width
+		sb.WriteString(reportIndent + "No files changed.\n")
 		return sb.String()
 	}
 	for _, f := range files {
 		if f.OldPath != "" {
-			sb.WriteString(browseIndent + f.Status + "  " + f.OldPath + " -> " + f.Path + "\n")
+			sb.WriteString(reportIndent + f.Status + "  " + f.OldPath + " -> " + f.Path + "\n")
 		} else {
-			sb.WriteString(browseIndent + f.Status + "  " + f.Path + "\n")
+			sb.WriteString(reportIndent + f.Status + "  " + f.Path + "\n")
 		}
 	}
-	_ = width
 	return sb.String()
 }
 
@@ -786,15 +754,13 @@ func sliceViewport(s string, offset, width int) string {
 	return string(r[offset:end])
 }
 
-// renderBrowse assembles the full (untruncated) screen for a page. Width
-// controls only the header padding and the decorative rules; body lines are
-// rendered at full content width and revealed through the horizontal viewport
-// by the browserState renderer. This keeps the renderers independent of
-// terminal state and directly assertable in tests.
-func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, width int) string {
+// renderBannerAndHeader emits the shared screen chrome: the KEEN banner, a
+// blank separator, the active-view line carrying the view label and page
+// counter, and a trailing blank separator. It is the single canonical source
+// for this chrome so every page renders an identical header.
+func renderBannerAndHeader(page BrowsePage, width int) string {
 	var sb strings.Builder
 	sb.WriteString("===KEEN===\n\n")
-
 	title := "‹ " + page.label() + " ›"
 	indicator := fmt.Sprintf("%d / %d", int(page)+1, browsePageCount)
 	pad := width - len([]rune(title)) - len([]rune(indicator))
@@ -805,6 +771,17 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 	sb.WriteString(strings.Repeat(" ", pad))
 	sb.WriteString(indicator)
 	sb.WriteString("\n\n")
+	return sb.String()
+}
+
+// renderBrowse assembles the full (untruncated) screen for a page. Width
+// controls only the header padding and the decorative rules; body lines are
+// rendered at full content width and revealed through the horizontal viewport
+// by the browserState renderer. This keeps the renderers independent of
+// terminal state and directly assertable in tests.
+func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, width int) string {
+	var sb strings.Builder
+	sb.WriteString(renderBannerAndHeader(page, width))
 
 	switch page {
 	case BrowseList:
@@ -819,11 +796,11 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 	case BrowseActivity:
 		sb.WriteString(renderActivity(repos, totalDiscovered, width))
 	case BrowseCommitHistory:
-		sb.WriteString(browseIndent + "Commit history requires interactive selection.\n")
+		sb.WriteString(reportIndent + "Commit history requires interactive selection.\n")
 	case BrowseCommitDetail:
-		sb.WriteString(browseIndent + "Commit detail requires interactive selection.\n")
+		sb.WriteString(reportIndent + "Commit detail requires interactive selection.\n")
 	case BrowseChangedFiles:
-		sb.WriteString(browseIndent + "Changed files require interactive selection.\n")
+		sb.WriteString(reportIndent + "Changed files require interactive selection.\n")
 	default:
 		sb.WriteString(renderOverview(repos, totalDiscovered, width))
 	}
@@ -841,13 +818,13 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 	case BrowseChangedFiles:
 		hint = "←/Esc back    q quit"
 	}
-	sb.WriteString(browseIndent + hint + "\n")
+	sb.WriteString(reportIndent + hint + "\n")
 	return sb.String()
 }
 
 func renderOverview(repos []Repository, totalDiscovered int, width int) string {
 	if len(repos) == 0 {
-		return browseIndent + emptyMessage(totalDiscovered) + "\n"
+		return reportIndent + emptyMessage(totalDiscovered) + "\n"
 	}
 
 	nameW, branchW, upstreamW := overviewWidths(width)
@@ -857,14 +834,14 @@ func renderOverview(repos []Repository, totalDiscovered int, width int) string {
 		var rows []string
 		for _, r := range repos {
 			if r.Dirty == dirty {
-				rows = append(rows, overviewRow(r, nameW, branchW, upstreamW))
+				rows = append(rows, renderOverviewRow(r, nameW, branchW, upstreamW))
 			}
 		}
 		if len(rows) == 0 {
 			return
 		}
-		sb.WriteString(browseIndent + title + "\n")
-		sb.WriteString(browseIndent + dashes(width) + "\n\n")
+		sb.WriteString(reportIndent + title + "\n")
+		sb.WriteString(reportIndent + dashes(width) + "\n\n")
 		for _, row := range rows {
 			sb.WriteString(row + "\n")
 		}
@@ -878,7 +855,7 @@ func renderOverview(repos []Repository, totalDiscovered int, width int) string {
 
 func renderActivity(repos []Repository, totalDiscovered int, width int) string {
 	if len(repos) == 0 {
-		return browseIndent + emptyMessage(totalDiscovered) + "\n"
+		return reportIndent + emptyMessage(totalDiscovered) + "\n"
 	}
 
 	var sb strings.Builder
@@ -893,8 +870,8 @@ func renderActivity(repos []Repository, totalDiscovered int, width int) string {
 		if len(entries) == 0 {
 			return
 		}
-		sb.WriteString(browseIndent + title + "\n")
-		sb.WriteString(browseIndent + dashes(width) + "\n\n")
+		sb.WriteString(reportIndent + title + "\n")
+		sb.WriteString(reportIndent + dashes(width) + "\n\n")
 		for _, e := range entries {
 			sb.WriteString(e)
 		}
@@ -906,17 +883,17 @@ func renderActivity(repos []Repository, totalDiscovered int, width int) string {
 	return sb.String()
 }
 
-// overviewRow presents the Overview contract: status, name, branch, upstream,
-// ahead, behind. The row is rendered at full content width (no field
+// renderOverviewRow presents the Overview contract: status, name, branch,
+// upstream, ahead, behind. The row is rendered at full content width (no field
 // truncation); the horizontal viewport reveals any content wider than the
 // terminal.
-func overviewRow(r Repository, nameW, branchW, upstreamW int) string {
+func renderOverviewRow(r Repository, nameW, branchW, upstreamW int) string {
 	return fmt.Sprintf("%s[%-5s] %-*s %-*s %-*s %s",
-		browseIndent, statusOf(r),
+		reportIndent, repoStatus(r),
 		nameW, r.Name,
-		branchW, overviewBranch(r),
-		upstreamW, overviewUpstream(r),
-		overviewAheadBehind(r))
+		branchW, branchLabel(r),
+		upstreamW, upstreamLabel(r),
+		aheadBehindLabel(r))
 }
 
 // activityEntry presents the Activity contract: name, short hash, subject,
@@ -924,15 +901,15 @@ func overviewRow(r Repository, nameW, branchW, upstreamW int) string {
 // The subject is shown in full; the horizontal viewport handles width.
 func activityEntry(r Repository) string {
 	var sb strings.Builder
-	sb.WriteString(browseIndent + r.Name + "\n")
+	sb.WriteString(reportIndent + r.Name + "\n")
 
 	if r.LastCommitHash == "" {
-		sb.WriteString(browseIndent + "  No commits\n")
+		sb.WriteString(reportIndent + "  No commits\n")
 		return sb.String()
 	}
 
-	sb.WriteString(browseIndent + "  " + shortHash(r.LastCommitHash) + "  " + r.LastCommitSubject + "\n")
-	sb.WriteString(browseIndent + "  " + r.LastCommitTime + "\n")
+	sb.WriteString(reportIndent + "  " + shortHash(r.LastCommitHash) + "  " + r.LastCommitSubject + "\n")
+	sb.WriteString(reportIndent + "  " + r.LastCommitTime + "\n")
 	return sb.String()
 }
 
@@ -940,28 +917,28 @@ func activityEntry(r Repository) string {
 // repository. It consumes only existing Repository facts.
 func renderDetail(repo Repository, width int) string {
 	var sb strings.Builder
-	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n")
-	sb.WriteString(browseIndent + "Path:       " + repo.Path + "\n")
-	status := statusOf(repo)
-	sb.WriteString(browseIndent + "Status:     " + status + "\n")
-	branch := overviewBranch(repo)
-	sb.WriteString(browseIndent + "Branch:     " + branch + "\n")
-	upstream := overviewUpstream(repo)
-	sb.WriteString(browseIndent + "Upstream:   " + upstream + "\n")
+	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n")
+	sb.WriteString(reportIndent + "Path:       " + repo.Path + "\n")
+	status := repoStatus(repo)
+	sb.WriteString(reportIndent + "Status:     " + status + "\n")
+	branch := branchLabel(repo)
+	sb.WriteString(reportIndent + "Branch:     " + branch + "\n")
+	upstream := upstreamLabel(repo)
+	sb.WriteString(reportIndent + "Upstream:   " + upstream + "\n")
 	// Ahead/Behind honest handling.
 	ahead, behind := "–", "–"
 	if repo.Upstream != "" {
 		ahead = fmt.Sprintf("%d", repo.Ahead)
 		behind = fmt.Sprintf("%d", repo.Behind)
 	}
-	sb.WriteString(browseIndent + "Ahead:      " + ahead + "\n")
-	sb.WriteString(browseIndent + "Behind:     " + behind + "\n")
-	sb.WriteString(browseIndent + "Last commit:\n")
+	sb.WriteString(reportIndent + "Ahead:      " + ahead + "\n")
+	sb.WriteString(reportIndent + "Behind:     " + behind + "\n")
+	sb.WriteString(reportIndent + "Last commit:\n")
 	if repo.LastCommitHash == "" {
-		sb.WriteString(browseIndent + "  No commits\n")
+		sb.WriteString(reportIndent + "  No commits\n")
 	} else {
-		sb.WriteString(browseIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
-		sb.WriteString(browseIndent + "  " + repo.LastCommitTime + "\n")
+		sb.WriteString(reportIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
+		sb.WriteString(reportIndent + "  " + repo.LastCommitTime + "\n")
 	}
 	// Use width to avoid accidental wrapping; detail relies on horizontal viewport.
 	_ = width
@@ -971,13 +948,13 @@ func renderDetail(repo Repository, width int) string {
 // renderActivityForSelected renders Activity contextual to the selected repository.
 func renderActivityForSelected(repo Repository, width int) string {
 	var sb strings.Builder
-	sb.WriteString(browseIndent + "Repository: " + repo.Name + "\n\n")
+	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n\n")
 	if repo.LastCommitHash == "" {
-		sb.WriteString(browseIndent + "  No commits\n")
+		sb.WriteString(reportIndent + "  No commits\n")
 		return sb.String()
 	}
-	sb.WriteString(browseIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
-	sb.WriteString(browseIndent + "  " + repo.LastCommitTime + "\n")
+	sb.WriteString(reportIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
+	sb.WriteString(reportIndent + "  " + repo.LastCommitTime + "\n")
 	_ = width
 	return sb.String()
 }
@@ -1012,7 +989,7 @@ func overviewWidths(width int) (int, int, int) {
 }
 
 func dashes(width int) string {
-	n := width - len([]rune(browseIndent))
+	n := width - len([]rune(reportIndent))
 	if n < 8 {
 		n = 8
 	}
@@ -1027,34 +1004,6 @@ func emptyMessage(totalDiscovered int) string {
 		return "No repositories found."
 	}
 	return "No repositories match the selected filters."
-}
-
-func statusOf(r Repository) string {
-	if r.Dirty {
-		return "dirty"
-	}
-	return "clean"
-}
-
-func overviewBranch(r Repository) string {
-	if r.Branch == "" {
-		return "detached"
-	}
-	return r.Branch
-}
-
-func overviewUpstream(r Repository) string {
-	if r.Upstream == "" {
-		return "—"
-	}
-	return r.Upstream
-}
-
-func overviewAheadBehind(r Repository) string {
-	if r.Upstream == "" {
-		return "↑– ↓–"
-	}
-	return fmt.Sprintf("↑%d ↓%d", r.Ahead, r.Behind)
 }
 
 func shortHash(h string) string {

@@ -6,18 +6,18 @@ import (
 	"strings"
 )
 
-// richBranch labels the branch column: a detached HEAD shows "detached" rather
-// than a fabricated branch name.
-func richBranch(repo Repository) string {
+// branchLabel labels a repository's branch: a detached HEAD shows "detached"
+// rather than a fabricated branch name.
+func branchLabel(repo Repository) string {
 	if repo.Branch == "" {
 		return "detached"
 	}
 	return repo.Branch
 }
 
-// richUpstream labels the upstream column; an absent upstream is shown as an
-// explicit em-dash rather than being folded into another column.
-func richUpstream(repo Repository) string {
+// upstreamLabel labels a repository's upstream; an absent upstream is shown as
+// an explicit em-dash rather than being folded into another column.
+func upstreamLabel(repo Repository) string {
 	if repo.Upstream == "" {
 		return "—"
 	}
@@ -49,8 +49,6 @@ type richColumn struct {
 }
 
 const (
-	richIndent = "    "
-
 	// Fixed widths for facts that do not benefit from stretching.
 	statusColWidth = 7
 	aheadColWidth  = 5
@@ -90,7 +88,7 @@ func renderRich(repositories []Repository, totalDiscovered, width int) string {
 	if len(repositories) == 0 {
 		return "\n" + emptyMessage(totalDiscovered) + "\n"
 	}
-	cols := richLayout(width - len([]rune(richIndent)))
+	cols := richLayout(width - len([]rune(reportIndent)))
 	if cols == nil {
 		return renderGrouped(repositories)
 	}
@@ -251,8 +249,8 @@ func richValues(r Repository) []string {
 	return []string{
 		repoStatus(r),
 		r.Name,
-		richBranch(r),
-		richUpstream(r),
+		branchLabel(r),
+		upstreamLabel(r),
 		ahead,
 		behind,
 		hash,
@@ -289,11 +287,11 @@ func richTable(repositories []Repository, cols []richColumn) string {
 		if len(rows) == 0 {
 			return
 		}
-		sb.WriteString(richIndent + "Git Status: " + title + "\n")
-		sb.WriteString(richIndent + rule + "\n")
-		sb.WriteString(richIndent + headerLine + "\n")
+		sb.WriteString(reportIndent + "Git Status: " + title + "\n")
+		sb.WriteString(reportIndent + rule + "\n")
+		sb.WriteString(reportIndent + headerLine + "\n")
 		for _, row := range rows {
-			sb.WriteString(richIndent + row + "\n")
+			sb.WriteString(reportIndent + row + "\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -317,10 +315,10 @@ func repoStatus(repository Repository) string {
 	return "clean"
 }
 
-// branchLabel renders the branch and, when configured, the upstream
+// branchUpstreamLabel renders the branch and, when configured, the upstream
 // relationship. A detached HEAD is shown as "detached" rather than a
 // fabricated branch name.
-func branchLabel(repo Repository) string {
+func branchUpstreamLabel(repo Repository) string {
 	if repo.Upstream == "" {
 		if repo.Branch == "" {
 			return "detached"
@@ -386,7 +384,7 @@ func Print(repositories []Repository, mode OutputMode, totalDiscovered int) {
 // repositoryRow renders one canonical row as a string.
 func repositoryRow(repository Repository) string {
 	status := repoStatus(repository)
-	row := fmt.Sprintf("[%-5s] %-15s (%-22s) %s", status, repository.Name, branchLabel(repository), aheadBehindLabel(repository))
+	row := fmt.Sprintf("[%-5s] %-15s (%-22s) %s", status, repository.Name, branchUpstreamLabel(repository), aheadBehindLabel(repository))
 	if cl := commitLabel(repository); cl != "" {
 		row += " | " + cl
 	}
@@ -443,7 +441,7 @@ func printCompact(repositories []Repository) {
 	fmt.Println()
 	for _, repository := range repositories {
 		status := repoStatus(repository)
-		fmt.Printf("[%s] %s (%s) %s", status, repository.Name, branchLabel(repository), aheadBehindLabel(repository))
+		fmt.Printf("[%s] %s (%s) %s", status, repository.Name, branchUpstreamLabel(repository), aheadBehindLabel(repository))
 		if cl := commitLabel(repository); cl != "" {
 			fmt.Printf(" | %s", cl)
 		}
