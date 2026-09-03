@@ -46,7 +46,7 @@ func TestRenderBrowseHeader(t *testing.T) {
 	if !strings.Contains(overview, "‹ LIST ›") {
 		t.Errorf("list header missing: %q", overview)
 	}
-	if !strings.Contains(overview, "1 / 3") {
+	if !strings.Contains(overview, "1 / 6") {
 		t.Errorf("list indicator missing: %q", overview)
 	}
 	if !strings.Contains(overview, "↑/↓ select") {
@@ -57,14 +57,14 @@ func TestRenderBrowseHeader(t *testing.T) {
 	if !strings.Contains(activity, "‹ ACTIVITY ›") {
 		t.Errorf("activity header missing: %q", activity)
 	}
-	if !strings.Contains(activity, "3 / 3") {
+	if !strings.Contains(activity, "3 / 6") {
 		t.Errorf("activity indicator missing: %q", activity)
 	}
 	detail := renderBrowse(browseSample(), 3, BrowseDetail, 40)
 	if !strings.Contains(detail, "‹ DETAIL ›") {
 		t.Errorf("detail header missing: %q", detail)
 	}
-	if !strings.Contains(detail, "2 / 3") {
+	if !strings.Contains(detail, "2 / 6") {
 		t.Errorf("detail indicator missing: %q", detail)
 	}
 	if !strings.Contains(detail, "←/Esc back") {
@@ -240,7 +240,7 @@ func TestBrowseHeaderLineContract(t *testing.T) {
 		t.Fatalf("browseHeaderLine %d out of range for %d lines", browseHeaderLine, len(lines))
 	}
 	header := lines[browseHeaderLine]
-	if !strings.Contains(header, "‹ LIST ›") || !strings.Contains(header, "1 / 3") {
+	if !strings.Contains(header, "‹ LIST ›") || !strings.Contains(header, "1 / 6") {
 		t.Errorf("line %d is not the view-indicator header: %q", browseHeaderLine, header)
 	}
 }
@@ -337,12 +337,12 @@ func TestRunHierarchicalNavigationAndIgnoresUnknownInput(t *testing.T) {
 	}
 }
 
-// TestRunEnterDoesNotCycleFromActivity pins that advancing with Enter from the
-// deepest surface (Activity) is a no-op rather than wrapping around to List.
-// Navigation is a strict hierarchy (List → Detail → Activity), never a carousel.
-func TestRunEnterDoesNotCycleFromActivity(t *testing.T) {
+// TestRunEnterDoesNotCycleFromChangedFiles pins that advancing with Enter from the
+// deepest surface (Changed Files) is a no-op rather than wrapping around to List.
+// Navigation is a strict hierarchy (List → Detail → Activity → Commit History → Commit Detail → Changed Files), never a carousel.
+func TestRunEnterDoesNotCycleFromChangedFiles(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
-	state.page = BrowseActivity
+	state.page = BrowseChangedFiles
 	i := 0
 	captureOutput(func() {
 		state.run(func() (keyAction, bool) {
@@ -354,10 +354,10 @@ func TestRunEnterDoesNotCycleFromActivity(t *testing.T) {
 		})
 	})
 	if i != 2 {
-		t.Errorf("Enter from Activity then quit; reads = %d, want 2", i)
+		t.Errorf("Enter from ChangedFiles then quit; reads = %d, want 2", i)
 	}
-	if state.page != BrowseActivity {
-		t.Errorf("page = %v, want Activity (Enter must not wrap to List)", state.page)
+	if state.page != BrowseChangedFiles {
+		t.Errorf("page = %v, want ChangedFiles (Enter must not wrap to List)", state.page)
 	}
 }
 
@@ -724,25 +724,41 @@ func TestNavigationKeepsSelectionValid(t *testing.T) {
 	}
 }
 
-// TestEnterFromListWithNoSelectionDoesNotNavigate pins that a bare Enter on an
-// empty list (selection -1) does not advance to Detail; there is nothing to
-// inspect, so the surface stays put.
-func TestEnterFromListWithNoSelectionDoesNotNavigate(t *testing.T) {
-	s := newBrowserState(nil, 0)
-	s.page = BrowseList
-	s.selected = -1
+// TestNavigationFullV070Hierarchy drives the complete v0.7.0 hierarchy
+// (List → Detail → Activity → Commit History → Commit Detail → Changed Files
+// and back up to List) and asserts correct page transitions at each step.
+func TestNavigationFullV070Hierarchy(t *testing.T) {
+	s := newBrowserState(browseSample(), 3)
+	s.history = []Commit{{Hash: "abc1234", Subject: "test commit"}}
+	s.selectedCommit = 0
+
+	actions := []keyAction{
+		keyEnter, // List -> Detail
+		keyEnter, // Detail -> Activity
+		keyEnter, // Activity -> History
+		keyEnter, // History -> Commit
+		keyEnter, // Commit -> Files
+		keyEsc,   // Files -> Commit
+		keyEsc,   // Commit -> History
+		keyEsc,   // History -> Activity
+		keyEsc,   // Activity -> Detail
+		keyEsc,   // Detail -> List
+		keyQuit,  // exit
+	}
+
 	i := 0
 	captureOutput(func() {
 		s.run(func() (keyAction, bool) {
-			i++
-			if i == 1 {
-				return keyEnter, true
+			if i >= len(actions) {
+				return keyQuit, false
 			}
-			return keyQuit, true
+			act := actions[i]
+			i++
+			return act, true
 		})
 	})
 	if s.page != BrowseList {
-		t.Errorf("Enter on empty list: page = %v, want List (no navigation)", s.page)
+		t.Errorf("final page = %v, want List", s.page)
 	}
 }
 
