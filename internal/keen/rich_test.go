@@ -191,7 +191,7 @@ func TestRenderRichWidthMatrix(t *testing.T) {
 		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
 			out := renderRich(repos, len(repos), width)
 
-			cols := richLayout(width - len([]rune(richIndent)))
+			cols := richLayout(width - len([]rune(reportIndent)))
 			if cols == nil {
 				// Canonical fallback: byte-identical to the grouped
 				// rendering, no table headers. Canonical output is unconstrained

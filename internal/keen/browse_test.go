@@ -250,9 +250,18 @@ func TestBrowseHeaderLineContract(t *testing.T) {
 // identity. It exercises browserState.render() (the composition that was
 // buggy), not just renderBrowse.
 func TestRenderKeepsViewIdentityVisibleAtEveryOffset(t *testing.T) {
-	for _, page := range []BrowsePage{BrowseList, BrowseActivity} {
+	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseActivity, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles} {
 		t.Run(page.label(), func(t *testing.T) {
-			state := &browserState{repos: browseSample(), total: 3, page: page, viewport: 20}
+			state := &browserState{
+				repos:          browseSample(),
+				total:          3,
+				page:           page,
+				selected:       0,
+				viewport:       20,
+				viewportHeight: 24,
+				history:        []Commit{{Hash: "abc1234", Subject: "test commit"}},
+				selectedCommit: 0,
+			}
 			maxOffset := state.contentWidth() - state.viewport
 			if maxOffset < 0 {
 				maxOffset = 0
@@ -876,5 +885,165 @@ func TestRenderingDeterminism(t *testing.T) {
 	b := captureOutput(s.render)
 	if a != b {
 		t.Errorf("rendering not deterministic")
+	}
+}
+
+// --- v0.7.0: Commit detail & changed-files rendering tests ---
+
+func commitFixture() (Repository, Commit) {
+	repo := Repository{Name: "myrepo", Path: "/work/myrepo"}
+	commit := Commit{
+		Hash:          "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		Subject:       "Add feature",
+		Body:          "A body line\nwith a second line",
+		Author:        "Alice Author",
+		AuthorDate:    "2026-08-01T00:00:00+00:00",
+		Committer:     "Bob Committer",
+		CommitterDate: "2026-08-01T00:00:00+00:00",
+		Parents:       []string{"parent1", "parent2"},
+	}
+	return repo, commit
+}
+
+func TestRenderCommitDetail(t *testing.T) {
+	repo, commit := commitFixture()
+	out := renderCommitDetail(repo, commit)
+
+	for _, want := range []string{
+		"Repository: myrepo",
+		"Commit:     a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+		"Author:     Alice Author",
+		"Committer:  Bob Committer",
+		"Parents:    parent1 parent2",
+		"Subject:    Add feature",
+		"Body:",
+		"A body line",
+		"with a second line",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("renderCommitDetail missing %q:\n%q", want, out)
+		}
+	}
+}
+
+// TestRenderCommitDetailRootCommit pins that a commit with no parents renders
+// the honest root-commit marker rather than assuming a parent exists.
+func TestRenderCommitDetailRootCommit(t *testing.T) {
+	repo, commit := commitFixture()
+	commit.Parents = nil
+	commit.Body = ""
+	out := renderCommitDetail(repo, commit)
+	if !strings.Contains(out, "(none - root commit)") {
+		t.Errorf("root commit marker missing:\n%q", out)
+	}
+	if strings.Contains(out, "Body:") {
+		t.Errorf("empty body must not render a Body section:\n%q", out)
+	}
+}
+
+// TestRenderCommitDetailSpecialCharacters pins that commit metadata containing
+// quotes, apostrophes, and Unicode survives rendering.
+func TestRenderCommitDetailSpecialCharacters(t *testing.T) {
+	repo, commit := commitFixture()
+	commit.Subject = "feat: \"quoted\" it's 'a' — 日本語"
+	commit.Body = "\"nested\" 'quotes' 日本語"
+	out := renderCommitDetail(repo, commit)
+	if !strings.Contains(out, commit.Subject) {
+		t.Errorf("subject with special chars missing:\n%q", out)
+	}
+	if !strings.Contains(out, commit.Body) {
+		t.Errorf("body with special chars missing:\n%q", out)
+	}
+}
+
+// TestRenderChangedFilesForCommit pins the changed-files rendering contract for
+// ordinary paths, renames, and multiple files.
+func TestRenderChangedFilesForCommit(t *testing.T) {
+	repo, commit := commitFixture()
+	files := []ChangedFile{
+		{Status: "M", Path: "internal/a.go"},
+		{Status: "A", Path: "internal/b.go"},
+		{Status: "D", Path: "internal/c.go"},
+		{Status: "R", Path: "new.go", OldPath: "old.go"},
+	}
+	out := renderChangedFilesForCommit(repo, commit, files, "")
+	for _, want := range []string{
+		"Repository: myrepo",
+		"Commit:     a1b2c3d", // short hash
+		"M  internal/a.go",
+		"A  internal/b.go",
+		"D  internal/c.go",
+		"R  old.go -> new.go",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("renderChangedFilesForCommit missing %q:\n%q", want, out)
+		}
+	}
+}
+
+// TestRenderChangedFilesEmpty pins the empty changed-file state: no files, no
+// panic, and an explicit empty-state message.
+func TestRenderChangedFilesEmpty(t *testing.T) {
+	repo, commit := commitFixture()
+	out := renderChangedFilesForCommit(repo, commit, nil, "")
+	if !strings.Contains(out, "No files changed.") {
+		t.Errorf("empty changed files marker missing:\n%q", out)
+	}
+}
+
+// TestRenderChangedFilesError pins the changed-files error state: an explicit
+// failure message is shown without panic or invalid output.
+func TestRenderChangedFilesError(t *testing.T) {
+	repo, commit := commitFixture()
+	out := renderChangedFilesForCommit(repo, commit, nil, "some git error")
+	if !strings.Contains(out, "Failed to load changed files: some git error") {
+		t.Errorf("changed files error marker missing:\n%q", out)
+	}
+}
+
+// TestRenderChangedFilesSpecialCharacters pins that filenames containing
+// spaces and punctuation render without corruption.
+func TestRenderChangedFilesSpecialCharacters(t *testing.T) {
+	repo, commit := commitFixture()
+	files := []ChangedFile{
+		{Status: "M", Path: "dir with spaces/my file.go"},
+		{Status: "A", Path: "日本語/テスト.go"},
+	}
+	out := renderChangedFilesForCommit(repo, commit, files, "")
+	if !strings.Contains(out, "dir with spaces/my file.go") {
+		t.Errorf("filename with spaces missing:\n%q", out)
+	}
+	if !strings.Contains(out, "日本語/テスト.go") {
+		t.Errorf("unicode filename missing:\n%q", out)
+	}
+}
+
+// TestBrowseNonTTY pins the script compatibility contract: when stdin is not a
+// terminal (e.g. redirected from a pipe), keen -i (Browse) prints a one-shot
+// static overview and exits immediately without attempting terminal control.
+func TestBrowseNonTTY(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString("some input"); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+
+	repos := browseSample()
+	out := captureOutput(func() {
+		Browse(repos, 3)
+	})
+
+	if !strings.Contains(out, "‹ LIST ›") {
+		t.Errorf("non-TTY browse must output static list view, got:\n%q", out)
+	}
+	if strings.Contains(out, "\x1b[2J") {
+		t.Errorf("non-TTY browse must not emit clear-screen escape sequences:\n%q", out)
 	}
 }

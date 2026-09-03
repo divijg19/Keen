@@ -216,7 +216,8 @@ func TestEnrich(t *testing.T) {
 
 	t.Run("diverged repository parses ahead and behind", func(t *testing.T) {
 		bare := t.TempDir()
-		runGitCommand(t, bare, "init", "--bare", "-q")
+		runGitCommand(t, bare, "init", "--bare", "--initial-branch=main", "-q")
+		runGitCommand(t, bare, "config", "receive.denyCurrentBranch", "ignore")
 
 		work := t.TempDir()
 		runGitCommand(t, work, "init", "-q")
