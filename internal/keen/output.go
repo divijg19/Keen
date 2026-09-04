@@ -123,8 +123,8 @@ func richLayout(width int) []richColumn {
 	return cols
 }
 
-// richWideLayout allocates variable columns proportionally, exactly as the
-// v0.5.6 renderer did above its viability floor.
+// richWideLayout allocates variable columns proportionally for the wide tier,
+// where every variable column receives at least its generous floor.
 func richWideLayout(width int) []richColumn {
 	variables := width - (statusColWidth + aheadColWidth + behindColWidth + hashColWidth + timeColWidth + 8)
 	name := max(wideNameFloor, variables*25/100)
@@ -348,10 +348,7 @@ func commitLabel(repo Repository) string {
 	if repo.LastCommitHash == "" {
 		return ""
 	}
-	short := repo.LastCommitHash
-	if len(short) > 7 {
-		short = short[:7]
-	}
+	short := shortHash(repo.LastCommitHash)
 	subject := repo.LastCommitSubject
 	const maxSubject = 40
 	if len([]rune(subject)) > maxSubject {

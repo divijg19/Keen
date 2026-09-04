@@ -471,7 +471,7 @@ func TestReadKeyParsesLiveInput(t *testing.T) {
 	}
 }
 
-// --- v0.6.0: Selection tests ---
+// --- Selection tests ---
 
 func TestSelectionInitial(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
@@ -521,7 +521,7 @@ func TestSelectionBounds(t *testing.T) {
 	}
 }
 
-// --- v0.6.0: Vertical viewport tests ---
+// --- Vertical viewport tests ---
 
 func TestVerticalViewport(t *testing.T) {
 	// All items fit
@@ -577,7 +577,7 @@ func TestVerticalViewport(t *testing.T) {
 	}
 }
 
-// --- v0.6.0: Navigation tests ---
+// --- Navigation tests ---
 
 func TestNavigationListToDetail(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
@@ -733,7 +733,7 @@ func TestNavigationKeepsSelectionValid(t *testing.T) {
 	}
 }
 
-// TestNavigationFullV070Hierarchy drives the complete v0.7.0 hierarchy
+// TestNavigationFullV070Hierarchy drives the complete six-surface hierarchy
 // (List → Detail → Activity → Commit History → Commit Detail → Changed Files
 // and back up to List) and asserts correct page transitions at each step.
 func TestNavigationFullV070Hierarchy(t *testing.T) {
@@ -771,7 +771,7 @@ func TestNavigationFullV070Hierarchy(t *testing.T) {
 	}
 }
 
-// --- v0.6.0: Detail rendering tests ---
+// --- Detail rendering tests ---
 
 func TestRenderDetail(t *testing.T) {
 	repo := Repository{
@@ -779,7 +779,7 @@ func TestRenderDetail(t *testing.T) {
 		Dirty: false, Ahead: 2, Behind: 1,
 		LastCommitHash: "abc123def", LastCommitSubject: "fix bug", LastCommitTime: "2 hours ago",
 	}
-	out := renderDetail(repo, 80)
+	out := renderDetail(repo)
 	for _, want := range []string{"myrepo", "/home/user/myrepo", "clean", "main", "origin/main", "2", "1", "abc123d", "fix bug", "2 hours ago"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("detail missing %q in %q", want, out)
@@ -787,43 +787,43 @@ func TestRenderDetail(t *testing.T) {
 	}
 	// Dirty
 	repo.Dirty = true
-	out = renderDetail(repo, 80)
+	out = renderDetail(repo)
 	if !strings.Contains(out, "dirty") {
 		t.Errorf("detail dirty: %q", out)
 	}
 	// No upstream
 	repo.Upstream = ""
-	out = renderDetail(repo, 80)
+	out = renderDetail(repo)
 	if !strings.Contains(out, "—") {
 		t.Errorf("detail no upstream: %q", out)
 	}
 	// Detached
 	repo.Branch = ""
-	out = renderDetail(repo, 80)
+	out = renderDetail(repo)
 	if !strings.Contains(out, "detached") {
 		t.Errorf("detail detached: %q", out)
 	}
 	// No commits
 	repo.LastCommitHash = ""
-	out = renderDetail(repo, 80)
+	out = renderDetail(repo)
 	if !strings.Contains(out, "No commits") {
 		t.Errorf("detail no commits: %q", out)
 	}
 	// Long path
 	repo.Path = strings.Repeat("a", 100) + "/repo"
-	out = renderDetail(repo, 80)
+	out = renderDetail(repo)
 	if !strings.Contains(out, "a") {
 		t.Errorf("detail long path: %q", out)
 	}
 	// Collision-resolved identity
 	repo.Name = "work/api"
-	out = renderDetail(repo, 80)
+	out = renderDetail(repo)
 	if !strings.Contains(out, "work/api") {
 		t.Errorf("detail collision identity: %q", out)
 	}
 }
 
-// --- v0.6.0: Activity rendering tests (contextual) ---
+// --- Activity rendering tests (contextual) ---
 
 func TestRenderActivitySelected(t *testing.T) {
 	repo := Repository{Name: "myrepo", LastCommitHash: "abc123", LastCommitSubject: "feat", LastCommitTime: "now"}
@@ -848,7 +848,7 @@ func TestRenderActivitySelected(t *testing.T) {
 	}
 }
 
-// --- v0.6.0: Pipeline integrity ---
+// --- Pipeline integrity ---
 
 func TestPipelineIntegrity(t *testing.T) {
 	repos := []Repository{
@@ -868,13 +868,13 @@ func TestPipelineIntegrity(t *testing.T) {
 		t.Errorf("selected display Name = %q, want personal/api", repo.Name)
 	}
 	// Detail must use same repo object, not lookup by Name
-	detail := renderDetail(*repo, 80)
+	detail := renderDetail(*repo)
 	if !strings.Contains(detail, "/personal/api") {
 		t.Errorf("detail must show canonical Path: %q", detail)
 	}
 }
 
-// --- v0.6.0: Rendering determinism ---
+// --- Rendering determinism ---
 
 func TestRenderingDeterminism(t *testing.T) {
 	repos := browseSample()
@@ -888,7 +888,7 @@ func TestRenderingDeterminism(t *testing.T) {
 	}
 }
 
-// --- v0.7.0: Commit detail & changed-files rendering tests ---
+// --- Commit detail & changed-files rendering tests ---
 
 func commitFixture() (Repository, Commit) {
 	repo := Repository{Name: "myrepo", Path: "/work/myrepo"}

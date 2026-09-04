@@ -170,12 +170,10 @@ func hasHeader(cols []richColumn, name string) bool {
 //
 // Widths are boundary triplets (N-1/N/N+1) around each measured transition
 // (fallback|table = 50, SUBJECT-drop = 57, nine-column = 70, wide = 103)
-// rather than arbitrary samples. Note two intentional deviations from
-// byte-level v0.5.6 rich output at table widths: rule lines now span exactly
-// the terminal width via slack distribution (previously "close to" it), and
-// the generous subject floor no longer overflows its proportional share near
-// the wide threshold. Both are classified in ADR-004 as intended v0.5.7
-// behavior, not regressions.
+// rather than arbitrary samples. Two intentional behaviors of the current
+// design are asserted here: rule lines span exactly the terminal width via
+// slack distribution (not merely "close to" it), and the generous subject
+// floor never overflows its proportional share near the wide threshold.
 func TestRenderRichWidthMatrix(t *testing.T) {
 	repos := richMatrixFixture()
 	widths := []int{

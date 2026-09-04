@@ -27,7 +27,10 @@ Run `keen` from any directory containing Git repositories. Repositories are grou
 | `--compact`  | Compact one-line layout (canonical report only).                  |
 | `-r`         | Rich textual report.                                              |
 | `-i`         | Interactive repository investigation.                             |
+| `-version`   | Print the version (e.g. `keen v0.7.2`) and exit.                  |
 | `--help`     | Print usage.                                                      |
+
+`-version` prints the release version and exits without scanning or inspecting any repository.
 
 ## Presentation modes
 
@@ -53,6 +56,8 @@ Selecting a mode never changes which repositories are shown. `--clean`, `--dirty
 | Commit History | What happened before the latest commit?    | recent commits (hash, subject, author, date)                |
 | Commit Detail  | Which commit am I looking at?              | full hash, subject, body, author, dates, parents             |
 | Changed Files  | What files did this commit change?         | change status (A/M/D/R) and path(s)                          |
+
+Commit History shows the latest **20 commits** of the selected repository.
 
 List is an addressable index: each row carries enough to select the correct repository. Detail shows the full repository path plus working state and synchronization. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none). The surfaces form a strict hierarchy (`List → Detail → Activity → Commit History → Commit Detail → Changed Files`): `Enter` descends one level, `←`/`Esc` ascend one level, and Changed Files is the deepest — pressing anything past it never wraps around to List.
 

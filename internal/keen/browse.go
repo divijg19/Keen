@@ -315,7 +315,7 @@ func (b *browserState) contentWidth() int {
 		full = b.renderListContent()
 	case BrowseDetail:
 		if repo := b.selectedRepo(); repo != nil {
-			full = renderDetail(*repo, b.viewport)
+			full = renderDetail(*repo)
 		} else {
 			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 		}
@@ -388,7 +388,7 @@ func (b *browserState) render() {
 		full = b.renderListContent()
 	case BrowseDetail:
 		if repo := b.selectedRepo(); repo != nil {
-			full = renderDetail(*repo, b.viewport)
+			full = renderDetail(*repo)
 			// Wrap detail with banner/header chrome for consistency.
 			header := b.renderHeader()
 			full = header + full
@@ -789,7 +789,7 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 	case BrowseDetail:
 		// Detail via browse's contextual renderer; fallback to overview for tests.
 		if len(repos) > 0 {
-			sb.WriteString(renderDetail(repos[0], width))
+			sb.WriteString(renderDetail(repos[0]))
 		} else {
 			sb.WriteString(renderOverview(repos, totalDiscovered, width))
 		}
@@ -915,7 +915,7 @@ func activityEntry(r Repository) string {
 
 // renderDetail renders the bounded repository detail view for one selected
 // repository. It consumes only existing Repository facts.
-func renderDetail(repo Repository, width int) string {
+func renderDetail(repo Repository) string {
 	var sb strings.Builder
 	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n")
 	sb.WriteString(reportIndent + "Path:       " + repo.Path + "\n")
@@ -940,8 +940,6 @@ func renderDetail(repo Repository, width int) string {
 		sb.WriteString(reportIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
 		sb.WriteString(reportIndent + "  " + repo.LastCommitTime + "\n")
 	}
-	// Use width to avoid accidental wrapping; detail relies on horizontal viewport.
-	_ = width
 	return sb.String()
 }
 
@@ -1004,13 +1002,6 @@ func emptyMessage(totalDiscovered int) string {
 		return "No repositories found."
 	}
 	return "No repositories match the selected filters."
-}
-
-func shortHash(h string) string {
-	if len(h) > 7 {
-		return h[:7]
-	}
-	return h
 }
 
 // truncate shortens s to at most max runes, appending an ellipsis when the

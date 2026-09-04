@@ -80,7 +80,7 @@ func TestParseArgsInvalidFlag(t *testing.T) {
 	}
 }
 
-// TestParseArgsRejectsCompactWithModes pins the v0.5.7 grammar rule: --compact
+// TestParseArgsRejectsCompactWithModes pins the grammar rule: --compact
 // is a modifier of the canonical report and must be rejected alongside any
 // presentation mode, before discovery or enrichment runs.
 func TestParseArgsRejectsCompactWithModes(t *testing.T) {
@@ -97,8 +97,8 @@ func TestParseArgsRejectsCompactWithModes(t *testing.T) {
 }
 
 // TestParseArgsRejectsCombinedShortFlags pins the existing Go flag-package
-// behavior that v0.5.7 must not alter: combined short flags are not a
-// supported syntax and fail at parse time without producing a report.
+// behavior: combined short flags are not a supported syntax and fail at parse
+// time without producing a report.
 func TestParseArgsRejectsCombinedShortFlags(t *testing.T) {
 	for _, args := range [][]string{{"-ri"}, {"-ir"}} {
 		opts, err := parseArgs(args)
@@ -163,5 +163,66 @@ func TestInteractiveNonTTYNoEscape(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "‹ LIST ›") {
 		t.Errorf("one-shot output missing List header: %q", out.String())
+	}
+}
+
+func TestVersionLineDefault(t *testing.T) {
+	if version != "dev" {
+		t.Errorf("default version = %q, want %q", version, "dev")
+	}
+	if got := versionLine(); got != "keen dev" {
+		t.Errorf("versionLine() = %q, want %q", got, "keen dev")
+	}
+}
+
+func TestVersionLineInjected(t *testing.T) {
+	// The Go linker injects the release identity into the package-level
+	// version variable; test that the injected value is honored.
+	orig := version
+	version = "v0.7.2"
+	defer func() { version = orig }()
+	if got := versionLine(); got != "keen v0.7.2" {
+		t.Errorf("versionLine() = %q, want %q", got, "keen v0.7.2")
+	}
+}
+
+func TestParseArgsVersion(t *testing.T) {
+	for _, args := range [][]string{{"-version"}, {"--version"}} {
+		opts, err := parseArgs(args)
+		if err != nil {
+			t.Errorf("parseArgs(%v) unexpected error: %v", args, err)
+			continue
+		}
+		if !opts.PrintVersion {
+			t.Errorf("parseArgs(%v) PrintVersion = false, want true", args)
+		}
+	}
+}
+
+// TestVersionNoRepoWork re-executes the real binary with `-version` and asserts
+// it prints exactly the version line with no repository-discovery/report
+// output. It runs from the module root, which contains a Git repository; if
+// -version triggered discovery, a report would be emitted.
+func TestVersionNoRepoWork(t *testing.T) {
+	if os.Getenv("KEEN_VERSION_HELPER") == "1" {
+		os.Args = []string{"keen", "-version"}
+		main()
+		os.Exit(0)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	cmd := exec.Command(exe, "-test.run=TestVersionNoRepoWork")
+	cmd.Env = append(os.Environ(), "KEEN_VERSION_HELPER=1")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("subprocess failed: %v\nstderr: %s", err, errb.String())
+	}
+	if got := out.String(); got != "keen dev\n" {
+		t.Errorf("subprocess output = %q, want exactly %q (no discovery/report)", got, "keen dev\n")
 	}
 }
