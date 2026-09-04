@@ -41,7 +41,8 @@ func TestParseCommitHistory(t *testing.T) {
 }
 
 func TestParseChangedFiles(t *testing.T) {
-	raw := "M\tinternal/keen/browse.go\nA\tinternal/keen/history.go\nR100\told/path.go\tnew/path.go"
+	// Records are NUL-terminated: <status>\0<path>\0 or <status>\0<old>\0<new>\0.
+	raw := "M\x00internal/keen/browse.go\x00A\x00internal/keen/history.go\x00R100\x00old/path.go\x00new/path.go\x00"
 	files, err := parseChangedFiles(raw)
 	if err != nil {
 		t.Fatalf("unexpected error parsing changed files: %v", err)
@@ -58,6 +59,41 @@ func TestParseChangedFiles(t *testing.T) {
 	}
 	if files[2].Status != "R" || files[2].Path != "new/path.go" || files[2].OldPath != "old/path.go" {
 		t.Errorf("file 2 = %+v", files[2])
+	}
+}
+
+// TestParseChangedFilesRawPaths pins that the -z NUL format carries raw
+// (never quote-escaped) pathnames, so names with spaces, quotes, tabs, or
+// non-ASCII bytes are preserved verbatim.
+func TestParseChangedFilesRawPaths(t *testing.T) {
+	raw := "A\x00日本語/函数.go\x00" +
+		"A\x00has quote\"name.txt\x00" +
+		"A\x00name with space.txt\x00"
+	files, err := parseChangedFiles(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("expected 3 files, got %d", len(files))
+	}
+	if files[0].Path != "日本語/函数.go" {
+		t.Errorf("unicode Path = %q", files[0].Path)
+	}
+	if files[1].Path != `has quote"name.txt` {
+		t.Errorf("quoted Path = %q", files[1].Path)
+	}
+	if files[2].Path != "name with space.txt" {
+		t.Errorf("spaced Path = %q", files[2].Path)
+	}
+}
+
+func TestParseChangedFilesEmpty(t *testing.T) {
+	files, err := parseChangedFiles("")
+	if err != nil {
+		t.Fatalf("empty input must not error, got %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("empty input produced %d files, want 0", len(files))
 	}
 }
 

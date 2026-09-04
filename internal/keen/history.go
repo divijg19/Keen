@@ -96,50 +96,50 @@ func loadChangedFiles(repoPath, hash string) ([]ChangedFile, error) {
 	if hash == "" {
 		return nil, nil
 	}
-	// --no-commit-id suppresses hash line, -r recurses, -M detects renames,
-	// --name-status gives status + tab + path(s).
-	// For root commit, diff-tree without --no-commit-id would show nothing;
-	// use --root to include root diff.
-	out, err := runGit(repoPath, "diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "--root", hash)
+	// --no-commit-id suppresses the hash line, -r recurses, -M detects renames,
+	// --root includes root diffs, and -z NUL-terminates status and path fields.
+	// With -z, pathnames are emitted raw (never quote-escaped), so names with
+	// spaces, quotes, tabs, or non-ASCII bytes parse verbatim. Each record is
+	// <status>\0<path>\0, or <status>\0<old>\0<new>\0 for renames/copies.
+	out, err := runGit(repoPath, "diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "-z", "--root", hash)
 	if err != nil {
 		return nil, err
 	}
 	return parseChangedFiles(out)
 }
 
-// parseChangedFiles parses git diff-tree --name-status output.
+// parseChangedFiles parses git diff-tree --name-status -z output, which is a
+// sequence of NUL-terminated records. Status is the first field of each record;
+// statuses that begin with R or C carry an old and new path, all others a single
+// path. Paths are already raw (unescaped) because -z never quote-escapes them.
 func parseChangedFiles(raw string) ([]ChangedFile, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	lines := strings.Split(raw, "\n")
+	fields := strings.Split(raw, "\x00")
 	var files []ChangedFile
-	for _, line := range lines {
-		if line == "" {
-			continue
+	i := 0
+	for i < len(fields) {
+		status := fields[i]
+		if status == "" {
+			break
 		}
-		// Format: <status>\t<path>  or  <status>\t<old>\t<new> for renames
-		parts := strings.Split(line, "\t")
-		if len(parts) < 2 {
-			return nil, fmt.Errorf("unexpected changed-file line: %q", line)
-		}
-		status := parts[0]
-		// Status may be like "R100" for renames; keep first letter for display but preserve full?
-		// Use first rune as status category.
+		i++
+		// Status may include a similarity score (e.g. R100); reduce to its
+		// first letter for display so R100/C100 render as R/C.
 		displayStatus := status
-		if len(status) > 1 {
-			// For renames/copies, status is e.g. R100; display as R
-			displayStatus = status[:1]
+		if len(displayStatus) > 1 {
+			displayStatus = displayStatus[:1]
 		}
-		if len(parts) == 2 {
-			files = append(files, ChangedFile{Status: displayStatus, Path: parts[1]})
-		} else if len(parts) == 3 {
-			// Rename/copy: old and new
-			files = append(files, ChangedFile{Status: displayStatus, Path: parts[2], OldPath: parts[1]})
+		if displayStatus == "R" || displayStatus == "C" {
+			if i >= len(fields) || fields[i] == "" || i+1 >= len(fields) || fields[i+1] == "" {
+				return nil, fmt.Errorf("unexpected rename/copy record for status %q", status)
+			}
+			files = append(files, ChangedFile{Status: displayStatus, OldPath: fields[i], Path: fields[i+1]})
+			i += 2
 		} else {
-			// Unexpected but handle: join remaining?
-			files = append(files, ChangedFile{Status: displayStatus, Path: parts[len(parts)-1], OldPath: parts[1]})
+			if i >= len(fields) || fields[i] == "" {
+				return nil, fmt.Errorf("unexpected changed-file record for status %q", status)
+			}
+			files = append(files, ChangedFile{Status: displayStatus, Path: fields[i]})
+			i++
 		}
 	}
 	return files, nil

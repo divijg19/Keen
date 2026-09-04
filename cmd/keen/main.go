@@ -10,6 +10,21 @@ import (
 	"github.com/divijg19/Keen/internal/keen"
 )
 
+// version is the application release identity. It defaults to a development
+// marker and is replaced at release/build time via the Go linker:
+//
+//	go build -ldflags "-X main.version=v0.7.2" ./cmd/keen
+//
+// Keen never inspects Git at runtime to determine its own version.
+var version = "dev"
+
+// versionLine renders the `-version` output. Keeping it as a pure helper makes
+// the development default and the linker-injected release identity directly
+// assertable in tests.
+func versionLine() string {
+	return "keen " + version
+}
+
 // parseArgs converts CLI arguments into Keen's Options. Selection flags
 // (--clean/--dirty/--recent) are independent of the presentation mode; the
 // three presentation modes (canonical, rich via -r, interactive via -i) are
@@ -20,15 +35,19 @@ func parseArgs(args []string) (keen.Options, error) {
 
 	var opts keen.Options
 	var recentFlag string
+	var printVersion bool
 	fs.BoolVar(&opts.ShowClean, "clean", false, "show only clean repositories")
 	fs.BoolVar(&opts.ShowDirty, "dirty", false, "show only dirty repositories")
 	fs.StringVar(&recentFlag, "recent", "", "show only repositories with commits within duration (e.g. 30m, 24h, 7d)")
 	fs.BoolVar(&opts.Compact, "compact", false, "use compact output (canonical report only)")
 	fs.BoolVar(&opts.Rich, "r", false, "use the rich textual report")
 	fs.BoolVar(&opts.Interactive, "i", false, "open the interactive investigation (prints a one-shot overview when stdin is not a terminal)")
+	fs.BoolVar(&printVersion, "version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
+
+	opts.PrintVersion = printVersion
 
 	// Mode flags select the presentation; modifiers refine the canonical
 	// report unless explicitly supported by another mode. --compact belongs
@@ -73,6 +92,11 @@ func main() {
 		// Flag parse errors already printed usage to stdout; custom validation
 		// errors were printed to stderr above. Either way, exit non-zero.
 		os.Exit(1)
+	}
+
+	if opts.PrintVersion {
+		fmt.Println(versionLine())
+		return
 	}
 
 	repositories, err := keen.Discover(workingDir)
