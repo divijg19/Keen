@@ -268,6 +268,39 @@ func TestEnrich(t *testing.T) {
 	})
 }
 
+// TestParseAheadBehind pins the sync-fact contract: only two integers read
+// as a verified count. Anything else is unavailable, never a zero that a
+// renderer could mistake for a synchronized state.
+func TestParseAheadBehind(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantAhead  int
+		wantBehind int
+		wantOK     bool
+	}{
+		{"synced", "0\t0\n", 0, 0, true},
+		{"ahead", "3\t0\n", 3, 0, true},
+		{"behind", "0\t2\n", 0, 2, true},
+		{"diverged", "3\t1\n", 3, 1, true},
+		{"space separated", "1 4", 1, 4, true},
+		{"empty", "", 0, 0, false},
+		{"single field", "5\n", 0, 0, false},
+		{"three fields", "1\t2\t3\n", 0, 0, false},
+		{"non-numeric ahead", "x\t0\n", 0, 0, false},
+		{"non-numeric behind", "0\ty\n", 0, 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ahead, behind, ok := parseAheadBehind(tc.output)
+			if ok != tc.wantOK || ahead != tc.wantAhead || behind != tc.wantBehind {
+				t.Errorf("parseAheadBehind(%q) = (%d, %d, %v), want (%d, %d, %v)",
+					tc.output, ahead, behind, ok, tc.wantAhead, tc.wantBehind, tc.wantOK)
+			}
+		})
+	}
+}
+
 func initTestGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	runGitCommand(t, dir, "init", "-q")

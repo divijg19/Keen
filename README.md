@@ -15,7 +15,7 @@ go install ./cmd/keen
 keen [flags]
 ```
 
-Run `keen` from any directory containing Git repositories. Repositories are grouped by working-tree status (clean before dirty) and ordered deterministically by status → name → path.
+Run `keen` from any directory containing Git repositories. The report opens with a one-line workspace summary (e.g. `3 repositories, 2 clean, 1 dirty`) describing the selected set, then lists repositories grouped by working-tree status (clean before dirty) and ordered deterministically by status → name → path.
 
 ## Flags
 

@@ -92,7 +92,7 @@ func renderRich(repositories []Repository, totalDiscovered, width int) string {
 	if cols == nil {
 		return renderGrouped(repositories)
 	}
-	return "\n" + richTable(repositories, cols)
+	return "\n" + workspaceSummary(repositories) + "\n\n" + richTable(repositories, cols)
 }
 
 // richLayout selects the active column set for the requested width. It
@@ -362,12 +362,7 @@ func commitLabel(repo Repository) string {
 // discovered repositories and zero filter matches.
 func Print(repositories []Repository, mode OutputMode, totalDiscovered int) {
 	if len(repositories) == 0 {
-		fmt.Println()
-		if totalDiscovered == 0 {
-			fmt.Println("No repositories found.")
-		} else {
-			fmt.Println("No repositories match the selected filters.")
-		}
+		fmt.Print("\n" + emptyMessage(totalDiscovered) + "\n")
 		return
 	}
 	switch mode {
@@ -391,12 +386,35 @@ func repositoryRow(repository Repository) string {
 	return row + "\n"
 }
 
+// workspaceSummary renders the one-line workspace orientation placed before
+// the repository report: how many repositories are shown and how many need
+// attention. It summarizes the presented (post-filter) set, so the counts
+// always describe exactly what follows. The group headings below remain the
+// scan anchors; the summary answers "what kind of workspace is this" first.
+func workspaceSummary(repositories []Repository) string {
+	clean := 0
+	for _, repository := range repositories {
+		if !repository.Dirty {
+			clean++
+		}
+	}
+	dirty := len(repositories) - clean
+	noun := "repositories"
+	if len(repositories) == 1 {
+		noun = "repository"
+	}
+	return fmt.Sprintf("%d %s, %d clean, %d dirty", len(repositories), noun, clean, dirty)
+}
+
 // renderGrouped renders the canonical grouped report as a string. Both the
 // default presentation and the very-narrow rich fallback use exactly this
 // path, so identical repository sets always produce byte-identical output.
+// The group headings are the scan anchors; each row already carries its own
+// status tag, so no decorative rule is drawn beneath them.
 func renderGrouped(repositories []Repository) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
+	sb.WriteString(workspaceSummary(repositories) + "\n\n")
 	hasClean := false
 	hasDirty := false
 	for _, repository := range repositories {
@@ -408,7 +426,6 @@ func renderGrouped(repositories []Repository) string {
 	}
 	if hasClean {
 		sb.WriteString("    Git Status: CLEAN\n")
-		sb.WriteString("---------------------------\n")
 		for _, repository := range repositories {
 			if !repository.Dirty {
 				sb.WriteString(repositoryRow(repository))
@@ -420,7 +437,6 @@ func renderGrouped(repositories []Repository) string {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("    Git Status: DIRTY\n")
-		sb.WriteString("---------------------------\n")
 		for _, repository := range repositories {
 			if repository.Dirty {
 				sb.WriteString(repositoryRow(repository))

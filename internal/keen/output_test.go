@@ -288,3 +288,133 @@ func TestPrint(t *testing.T) {
 		}
 	})
 }
+
+// TestWorkspaceSummary pins the orientation line: it counts the presented
+// set, pluralizes the noun, and never appears for empty results or in the
+// condensed compact mode.
+func TestWorkspaceSummary(t *testing.T) {
+	tests := []struct {
+		name  string
+		repos []Repository
+		want  string
+	}{
+		{
+			"mixed workspace",
+			[]Repository{{Name: "a", Dirty: false}, {Name: "b", Dirty: false}, {Name: "c", Dirty: true}},
+			"3 repositories, 2 clean, 1 dirty",
+		},
+		{
+			"all clean",
+			[]Repository{{Name: "a", Dirty: false}, {Name: "b", Dirty: false}},
+			"2 repositories, 2 clean, 0 dirty",
+		},
+		{
+			"all dirty",
+			[]Repository{{Name: "a", Dirty: true}},
+			"1 repository, 0 clean, 1 dirty",
+		},
+		{
+			"single clean repository",
+			[]Repository{{Name: "a", Dirty: false}},
+			"1 repository, 1 clean, 0 dirty",
+		},
+		{
+			"filtered subset counts what is shown",
+			[]Repository{{Name: "c", Dirty: true}},
+			"1 repository, 0 clean, 1 dirty",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workspaceSummary(tc.repos); got != tc.want {
+				t.Errorf("workspaceSummary = %q, want %q", got, tc.want)
+			}
+			grouped := renderGrouped(tc.repos)
+			if !strings.Contains(grouped, tc.want) {
+				t.Errorf("grouped report missing summary %q:\n%s", tc.want, grouped)
+			}
+			rich := renderRich(tc.repos, len(tc.repos), 200)
+			if !strings.Contains(rich, tc.want) {
+				t.Errorf("rich report missing summary %q:\n%s", tc.want, rich)
+			}
+			compact := captureOutput(func() {
+				Print(tc.repos, OutputCompact, len(tc.repos))
+			})
+			if strings.Contains(compact, tc.want) {
+				t.Errorf("compact output must stay condensed, found summary %q:\n%s", tc.want, compact)
+			}
+		})
+	}
+
+	t.Run("no summary for empty results", func(t *testing.T) {
+		for _, total := range []int{0, 3} {
+			grouped := captureOutput(func() {
+				Print([]Repository{}, OutputGrouped, total)
+			})
+			if strings.Contains(grouped, "repositories,") {
+				t.Errorf("empty grouped output must not manufacture a summary (total=%d): %q", total, grouped)
+			}
+			rich := renderRich([]Repository{}, total, 200)
+			if strings.Contains(rich, "repositories,") {
+				t.Errorf("empty rich output must not manufacture a summary (total=%d): %q", total, rich)
+			}
+		}
+	})
+}
+
+// TestRendererFactContract pins one shared repository matrix across all three
+// renderers: the same facts must be recognizable in each, in the shape suited
+// to its density level (canonical combines, rich splits into columns, the
+// interactive list identifies and defers commit detail to deeper surfaces).
+// The sync counts 7/9 are deliberately distinctive so the rich columns can
+// assert the exact numbers without colliding with other fixture digits.
+func TestRendererFactContract(t *testing.T) {
+	repos := []Repository{
+		{Name: "synced", Branch: "main", Upstream: "origin/main", Dirty: false, LastCommitHash: "abcdef1234567890", LastCommitSubject: "initial commit", LastCommitTime: "1 day ago"},
+		{Name: "diverged", Branch: "dev", Upstream: "origin/dev", Ahead: 7, Behind: 9, Dirty: true, LastCommitHash: "1234567abcdef0", LastCommitSubject: "work in progress", LastCommitTime: "2 hours ago"},
+		{Name: "detached", Branch: "", Upstream: "", Dirty: false, LastCommitHash: "deadbee0123456", LastCommitSubject: "detached work", LastCommitTime: "3 days ago"},
+		{Name: "empty", Branch: "main", Upstream: "", Dirty: false},
+	}
+	canonical := renderGrouped(repos)
+	rich := renderRich(repos, len(repos), 200)
+	browseList := renderBrowse(repos, len(repos), BrowseList, 200)
+
+	for _, r := range repos {
+		for mode, out := range map[string]string{"canonical": canonical, "rich": rich, "browse": browseList} {
+			if !strings.Contains(out, r.Name) {
+				t.Errorf("%s output missing repository %q", mode, r.Name)
+			}
+		}
+		if r.LastCommitHash != "" {
+			detail := renderDetail(r)
+			for mode, out := range map[string]string{"canonical": canonical, "rich": rich, "browse-detail": detail} {
+				if !strings.Contains(out, shortHash(r.LastCommitHash)) {
+					t.Errorf("%s output missing short hash for %q", mode, r.Name)
+				}
+				if strings.Contains(out, r.LastCommitHash) {
+					t.Errorf("%s output leaks full hash for %q", mode, r.Name)
+				}
+			}
+		}
+	}
+
+	// Canonical combines facts into prose labels.
+	for _, want := range []string{"main → origin/main", "↑7 ↓9", "detached", "↑– ↓–"} {
+		if !strings.Contains(canonical, want) {
+			t.Errorf("canonical output missing %q", want)
+		}
+	}
+	// Rich splits the same facts into columns.
+	for _, want := range []string{"AHEAD", "BEHIND", "origin/main", "7", "9", "detached", "—"} {
+		if !strings.Contains(rich, want) {
+			t.Errorf("rich output missing %q", want)
+		}
+	}
+	// The interactive list identifies; it shares aheadBehindLabel with
+	// canonical but keeps branch/upstream as separate columns.
+	for _, want := range []string{"origin/main", "↑7 ↓9", "detached", "↑– ↓–"} {
+		if !strings.Contains(browseList, want) {
+			t.Errorf("browse list output missing %q", want)
+		}
+	}
+}

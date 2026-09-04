@@ -88,17 +88,18 @@ func interpretSequence(seq string) keyAction {
 
 // browseHeaderLine is the index of the view-indicator header within the screen
 // produced by renderBrowse. The layout contract is fixed: renderBrowse emits
-// the banner (line 0), a blank separator (line 1), then the header carrying
-// the active view label and page counter (line 2). browserState.render keeps
-// exactly this line exempt from horizontal slicing so the active view remains
-// identifiable at every offset; only body content scrolls.
-const browseHeaderLine = 2
+// the header carrying the active view label and page counter (line 0),
+// followed by a blank separator (line 1). browserState.render keeps exactly
+// this line exempt from horizontal slicing so the active view remains
+// identifiable at every offset; only body content scrolls. No application
+// banner is drawn: the header already orients the user on every repaint.
+const browseHeaderLine = 0
 
 // browseChromeRows is the fixed count of vertical chrome rows occupied by the
-// banner, separators, header, and hint on every interactive page. availableRows
+// header, separators, and hint on every interactive page. availableRows
 // reserves this many rows before laying out selectable body content so the
 // chrome never overlaps the visible selection window.
-const browseChromeRows = 6
+const browseChromeRows = 5
 
 // browserState holds the concrete, local view state for one interactive
 // session. It deliberately models distinct values for selection, vertical
@@ -389,7 +390,7 @@ func (b *browserState) render() {
 	case BrowseDetail:
 		if repo := b.selectedRepo(); repo != nil {
 			full = renderDetail(*repo)
-			// Wrap detail with banner/header chrome for consistency.
+			// Wrap detail with the view header for consistency.
 			header := b.renderHeader()
 			full = header + full
 		} else {
@@ -455,8 +456,8 @@ func (b *browserState) renderHeader() string {
 	return renderBannerAndHeader(b.page, b.viewport)
 }
 
-// renderListContent renders the List surface, prefixed by the shared banner
-// and active-view header.
+// renderListContent renders the List surface, prefixed by the shared
+// active-view header.
 func (b *browserState) renderListContent() string {
 	var sb strings.Builder
 	sb.WriteString(renderBannerAndHeader(b.page, b.viewport))
@@ -760,7 +761,6 @@ func sliceViewport(s string, offset, width int) string {
 // for this chrome so every page renders an identical header.
 func renderBannerAndHeader(page BrowsePage, width int) string {
 	var sb strings.Builder
-	sb.WriteString("===KEEN===\n\n")
 	title := "‹ " + page.label() + " ›"
 	indicator := fmt.Sprintf("%d / %d", int(page)+1, browsePageCount)
 	pad := width - len([]rune(title)) - len([]rune(indicator))
