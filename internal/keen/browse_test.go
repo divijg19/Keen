@@ -537,7 +537,7 @@ func TestVerticalViewport(t *testing.T) {
 		long[i] = Repository{Name: fmt.Sprintf("repo-%02d", i), Path: fmt.Sprintf("/repo-%02d", i)}
 	}
 	s = newBrowserState(long, 20)
-	s.viewportHeight = 10 // availableRows = 4
+	s.viewportHeight = 10 // availableRows = 5
 	s.selected = 0
 	s.ensureVisible()
 	if s.listOffset != 0 {
@@ -546,21 +546,21 @@ func TestVerticalViewport(t *testing.T) {
 	// Selected at bottom
 	s.selected = 19
 	s.ensureVisible()
-	if s.listOffset != 16 {
-		t.Errorf("bottom: listOffset = %d, want 16", s.listOffset)
+	if s.listOffset != 15 {
+		t.Errorf("bottom: listOffset = %d, want 15", s.listOffset)
 	}
 	// Scroll down
 	s.selected = 5
 	s.listOffset = 0
 	s.ensureVisible()
-	if s.listOffset != 2 {
-		t.Errorf("scroll down: listOffset = %d, want 2", s.listOffset)
+	if s.listOffset != 1 {
+		t.Errorf("scroll down: listOffset = %d, want 1", s.listOffset)
 	}
 	// Scroll up
 	s.selected = 2
 	s.ensureVisible()
-	if s.listOffset != 2 {
-		t.Errorf("scroll up: listOffset = %d, want 2 (still visible)", s.listOffset)
+	if s.listOffset != 1 {
+		t.Errorf("scroll up: listOffset = %d, want 1 (still visible)", s.listOffset)
 	}
 	s.selected = 1
 	s.ensureVisible()

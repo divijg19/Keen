@@ -1,6 +1,7 @@
 package keen
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -10,13 +11,45 @@ import (
 )
 
 // runGit centralizes Git command execution through a single narrow abstraction
-// over exec.Command. It returns combined standard output as a string and any
-// error from the subprocess.
+// over exec.Command. It returns standard output as a string; on failure the
+// error carries Git's stderr so diagnostics name the cause without polluting
+// the parsed stdout contract.
 func runGit(dir string, args ...string) (string, error) {
 	cmdArgs := append([]string{"-C", dir}, args...)
 	cmd := exec.Command("git", cmdArgs...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	output, err := cmd.Output()
-	return string(output), err
+	if err != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return string(output), fmt.Errorf("%w: %s", err, detail)
+		}
+		return string(output), err
+	}
+	return string(output), nil
+}
+
+// parseAheadBehind interprets `git rev-list --left-right --count` output: two
+// whitespace-separated integers, ahead then behind. Anything else — wrong
+// field count or non-numeric fields — means the synchronization fact is
+// unavailable, never a verified zero. Callers must leave the repository
+// without an upstream on !ok so renderers show the explicit unavailable
+// marker instead of a misleading synchronized state.
+func parseAheadBehind(output string) (ahead, behind int, ok bool) {
+	fields := strings.Fields(output)
+	if len(fields) != 2 {
+		return 0, 0, false
+	}
+	var err error
+	ahead, err = strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	behind, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return ahead, behind, true
 }
 
 // Enrich populates a repository's Git metadata using separate, intentional Git
@@ -36,7 +69,8 @@ func runGit(dir string, args ...string) (string, error) {
 //
 //	Optional facts — failure degrades gracefully:
 //	  upstream tracking        (git rev-list HEAD...@{upstream})
-//	    absent upstream → Ahead = 0, Behind = 0, Upstream = ""
+//	    absent upstream or uninterpretable output → Ahead = 0, Behind = 0,
+//	    Upstream = "" (explicitly unavailable, never a verified zero)
 //	  upstream identity        (git rev-parse --abbrev-ref --symbolic-full-name @{upstream})
 //	    absent upstream → Upstream = ""
 func Enrich(repo *Repository) error {
@@ -55,19 +89,22 @@ func Enrich(repo *Repository) error {
 	repo.Branch = strings.TrimSpace(output)
 
 	output, err = runGit(repo.Path, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
-	if err != nil {
-		// Repository may not have an upstream configured.
+	if ahead, behind, ok := parseAheadBehind(output); err != nil || !ok {
+		// No upstream, or output that cannot be read as a sync fact:
+		// explicitly unavailable, never a verified synchronized state.
 		repo.Ahead = 0
 		repo.Behind = 0
 		repo.Upstream = ""
 	} else {
-		fields := strings.Fields(output)
-		if len(fields) == 2 {
-			repo.Ahead, _ = strconv.Atoi(fields[0])
-			repo.Behind, _ = strconv.Atoi(fields[1])
-		}
+		repo.Ahead = ahead
+		repo.Behind = behind
 		if upstream, uerr := runGit(repo.Path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); uerr == nil {
 			repo.Upstream = strings.TrimSpace(upstream)
+		} else {
+			// Counts without a resolvable upstream name are not trustworthy.
+			repo.Ahead = 0
+			repo.Behind = 0
+			repo.Upstream = ""
 		}
 	}
 
