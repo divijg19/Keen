@@ -25,11 +25,11 @@ func upstreamLabel(repo Repository) string {
 }
 
 // PrintRich renders a dense, columnar textual report. It presents the same
-// information semantics used by the interactive views (status, name, branch,
-// upstream, ahead/behind, short hash, subject, relative commit time) as aligned
-// columns rather than prose. The layout adapts deterministically to the
-// terminal width: below the point where a coherent table is impossible, it
-// degrades silently to the canonical grouped report.
+// information semantics used by the interactive views (name, branch, upstream,
+// ahead/behind, short hash, subject, relative commit time) as aligned columns
+// rather than prose. The layout adapts deterministically to the terminal
+// width: below the point where a coherent table is impossible, it degrades
+// silently to the canonical grouped report.
 func PrintRich(repositories []Repository, totalDiscovered int) {
 	width := terminalWidth()
 	fmt.Print(renderRich(repositories, totalDiscovered, width))
@@ -38,7 +38,7 @@ func PrintRich(repositories []Repository, totalDiscovered int) {
 // richColumn describes one column of the rich table: its header label, its
 // rendered width, whether its values are right-aligned, and whether it may
 // absorb leftover terminal width. Columns are always held in priority order
-// (STATUS through TIME) and width adaptation only ever removes trailing
+// (NAME through TIME) and width adaptation only ever removes trailing
 // columns, so the number of separators between columns is always
 // len(columns) - 1.
 type richColumn struct {
@@ -50,7 +50,6 @@ type richColumn struct {
 
 const (
 	// Fixed widths for facts that do not benefit from stretching.
-	statusColWidth = 7
 	aheadColWidth  = 5
 	behindColWidth = 6
 	hashColWidth   = 7
@@ -62,7 +61,7 @@ const (
 	wideUpstreamFloor = 12
 	wideSubjectFloor  = 20
 
-	// Tightened variable floors that keep all nine columns viable below the
+	// Tightened variable floors that keep all eight columns viable below the
 	// wide threshold.
 	tightNameFloor     = 6
 	tightBranchFloor   = 4 // e.g. "main"
@@ -71,16 +70,15 @@ const (
 
 	// richWideMinWidth is the smallest CONTENT budget where every variable
 	// column receives at least its generous floor, measured from this
-	// renderer's own arithmetic: 37 fixed + 8 separators + 54 floors = 99.
+	// renderer's own arithmetic: 30 fixed + 7 separators + 54 floors = 91.
 	// Callers pass width minus the four-space report indent.
-	richWideMinWidth = 99
+	richWideMinWidth = 91
 
 	// richTableMinWidth is the smallest CONTENT budget where any coherent
-	// rich table remains possible (identity, branch, and the atomic sync
-	// pair). Below it keen -r renders the canonical grouped report instead:
-	// a successful, silent degradation — stdout stays clean and stderr stays
-	// reserved for genuine diagnostics. Callers pass width minus the
-	// four-space report indent.
+	// rich table remains possible. Below it keen -r renders the canonical
+	// grouped report instead: a successful, silent degradation — stdout stays
+	// clean and stderr stays reserved for genuine diagnostics. Callers pass
+	// width minus the four-space report indent.
 	richTableMinWidth = 46
 )
 
@@ -90,7 +88,7 @@ func renderRich(repositories []Repository, totalDiscovered, width int) string {
 	}
 	cols := richLayout(width - len([]rune(reportIndent)))
 	if cols == nil {
-		return renderGrouped(repositories)
+		return renderGrouped(repositories, width)
 	}
 	return "\n" + workspaceSummary(repositories) + "\n\n" + richTable(repositories, cols)
 }
@@ -126,7 +124,7 @@ func richLayout(width int) []richColumn {
 // richWideLayout allocates variable columns proportionally for the wide tier,
 // where every variable column receives at least its generous floor.
 func richWideLayout(width int) []richColumn {
-	variables := width - (statusColWidth + aheadColWidth + behindColWidth + hashColWidth + timeColWidth + 8)
+	variables := width - (aheadColWidth + behindColWidth + hashColWidth + timeColWidth + 7)
 	name := max(wideNameFloor, variables*25/100)
 	branch := max(wideBranchFloor, variables*20/100)
 	upstream := max(wideUpstreamFloor, variables*25/100)
@@ -140,7 +138,6 @@ func richWideLayout(width int) []richColumn {
 		subject -= overflow
 	}
 	return []richColumn{
-		{"STATUS", statusColWidth, false, false},
 		{"NAME", name, false, true},
 		{"BRANCH", branch, false, true},
 		{"UPSTREAM", upstream, false, true},
@@ -152,12 +149,11 @@ func richWideLayout(width int) []richColumn {
 	}
 }
 
-// richTightLayout is the full nine-column table using tightened floors; it
+// richTightLayout is the full eight-column table using tightened floors; it
 // is the starting point for width adaptation below the wide threshold
-// (measured requirement: 58 cells + 8 separators = 66 columns).
+// (measured requirement: 51 cells + 7 separators = 58 columns).
 func richTightLayout() []richColumn {
 	return []richColumn{
-		{"STATUS", statusColWidth, false, false},
 		{"NAME", tightNameFloor, false, true},
 		{"BRANCH", tightBranchFloor, false, true},
 		{"UPSTREAM", tightUpstreamFloor, false, true},
@@ -169,21 +165,25 @@ func richTightLayout() []richColumn {
 	}
 }
 
-// richDropExpendable removes the lowest-priority trailing column according to
-// the information hierarchy: TIME first, then SUBJECT, then the AHEAD/BEHIND
-// synchronization pair atomically (never half a divergence fact), then HASH,
-// UPSTREAM, and BRANCH. STATUS and NAME are never dropped. The boolean
-// reports whether anything was removed.
+// richDropExpendable removes the lowest-priority column according to the
+// information hierarchy: TIME first, then SUBJECT, then the AHEAD/BEHIND
+// synchronization pair atomically (never half a divergence fact, and HASH is
+// preserved because it outranks the pair for removal), then HASH, UPSTREAM,
+// and BRANCH. NAME is never dropped. The boolean reports whether anything was
+// removed.
 func richDropExpendable(cols []richColumn) ([]richColumn, bool) {
 	n := len(cols)
 	switch {
-	case n > 8: // TIME
+	case n > 7: // TIME
 		return cols[:n-1], true
-	case n > 7: // SUBJECT
+	case n > 6: // SUBJECT
 		return cols[:n-1], true
-	case n > 5: // AHEAD+BEHIND atomically
-		return cols[:n-2], true
-	case n > 3: // HASH, then UPSTREAM, then BRANCH
+	case n > 4: // AHEAD+BEHIND atomically, splicing around HASH
+		out := make([]richColumn, 0, n-2)
+		out = append(out, cols[:3]...)
+		out = append(out, cols[5:]...)
+		return out, true
+	case n > 1: // HASH, then UPSTREAM, then BRANCH
 		return cols[:n-1], true
 	}
 	return cols, false
@@ -224,7 +224,7 @@ func richDistributeSlack(cols []richColumn, width int) {
 	}
 }
 
-// richValues returns a repository's nine display values in canonical column
+// richValues returns a repository's eight display values in canonical column
 // order. Positional pairing with a prefix of that order is what allows
 // trailing-column removal without any lookup structure.
 func richValues(r Repository) []string {
@@ -247,7 +247,6 @@ func richValues(r Repository) []string {
 		time = "—"
 	}
 	return []string{
-		repoStatus(r),
 		r.Name,
 		branchLabel(r),
 		upstreamLabel(r),
@@ -287,7 +286,7 @@ func richTable(repositories []Repository, cols []richColumn) string {
 		if len(rows) == 0 {
 			return
 		}
-		sb.WriteString(reportIndent + "Git Status: " + title + "\n")
+		sb.WriteString(reportIndent + title + "\n")
 		sb.WriteString(reportIndent + rule + "\n")
 		sb.WriteString(reportIndent + headerLine + "\n")
 		for _, row := range rows {
@@ -342,17 +341,27 @@ func aheadBehindLabel(repo Repository) string {
 }
 
 // commitLabel renders the latest commit as a seven-character short hash
-// followed by a width-bounded subject. The canonical subject on the model is
-// never altered; only its presentation is truncated.
-func commitLabel(repo Repository) string {
+// followed by a width-bounded subject. The subject budget never exceeds the
+// canonical 40-rune cap, so unconstrained rendering stays bounded; in narrow
+// terminals the subject is additionally trimmed to the remaining line budget,
+// and only the bare short hash survives when even one subject rune cannot fit.
+// The canonical subject on the model is never altered; only its presentation
+// is truncated.
+func commitLabel(repo Repository, budget int) string {
 	if repo.LastCommitHash == "" {
 		return ""
 	}
 	short := shortHash(repo.LastCommitHash)
+	avail := budget - len(short) - 1
+	if maxSubject := 40; avail > maxSubject {
+		avail = maxSubject
+	}
+	if avail < 1 {
+		return short
+	}
 	subject := repo.LastCommitSubject
-	const maxSubject = 40
-	if len([]rune(subject)) > maxSubject {
-		subject = string([]rune(subject)[:maxSubject]) + "…"
+	if len([]rune(subject)) > avail {
+		subject = string([]rune(subject)[:avail]) + "…"
 	}
 	return short + " " + subject
 }
@@ -373,23 +382,43 @@ func Print(repositories []Repository, mode OutputMode, totalDiscovered int) {
 	}
 }
 
-// repositoryRow renders one canonical row as a string.
-func repositoryRow(repository Repository) string {
-	status := repoStatus(repository)
-	row := fmt.Sprintf("[%-5s] %-15s (%-22s) %s", status, repository.Name, branchUpstreamLabel(repository), aheadBehindLabel(repository))
-	if cl := commitLabel(repository); cl != "" {
-		row += " | " + cl
+// repositoryRow renders one canonical row as a string. showTag prefixes the
+// explicit [clean]/[dirty] marker for surfaces without a structural status
+// signal (compact mode); grouped surfaces carry the status in their section
+// heading instead and pass showTag=false. width is the terminal width (0 means
+// unconstrained); commit identity and relative time are appended only when
+// they fit, so lower-priority facts drop before the identity, branch, and
+// synchronization facts become unreadable.
+func repositoryRow(repository Repository, width int, showTag bool) string {
+	var line strings.Builder
+	if showTag {
+		line.WriteString("[" + repoStatus(repository) + "] ")
+	}
+	fmt.Fprintf(&line, "%-15s (%-22s) %s", repository.Name, branchUpstreamLabel(repository), aheadBehindLabel(repository))
+
+	remaining := func() int {
+		if width <= 0 {
+			return 1 << 30
+		}
+		return width - len([]rune(reportIndent)) - len([]rune(line.String()))
+	}
+	if repository.LastCommitHash != "" {
+		if rem := remaining(); rem >= 13 { // " | " + short hash + space + one subject rune
+			line.WriteString(" | " + commitLabel(repository, rem-3))
+		}
 	}
 	if repository.LastCommitTime != "" {
-		row += " | " + repository.LastCommitTime
+		if rem := remaining(); rem >= 3+len([]rune(repository.LastCommitTime)) {
+			line.WriteString(" | " + repository.LastCommitTime)
+		}
 	}
-	return row + "\n"
+	return line.String() + "\n"
 }
 
 // workspaceSummary renders the one-line workspace orientation placed before
 // the repository report: how many repositories are shown and how many need
 // attention. It summarizes the presented (post-filter) set, so the counts
-// always describe exactly what follows. The group headings below remain the
+// always describe exactly what follows. The section headings below remain the
 // scan anchors; the summary answers "what kind of workspace is this" first.
 func workspaceSummary(repositories []Repository) string {
 	clean := 0
@@ -408,10 +437,10 @@ func workspaceSummary(repositories []Repository) string {
 
 // renderGrouped renders the canonical grouped report as a string. Both the
 // default presentation and the very-narrow rich fallback use exactly this
-// path, so identical repository sets always produce byte-identical output.
-// The group headings are the scan anchors; each row already carries its own
-// status tag, so no decorative rule is drawn beneath them.
-func renderGrouped(repositories []Repository) string {
+// path, so identical repository sets and widths always produce byte-identical
+// output. The CLEAN/DIRTY section headings are the scan anchors and the single
+// status signal; rows carry no per-repo status tag beneath them.
+func renderGrouped(repositories []Repository, width int) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	sb.WriteString(workspaceSummary(repositories) + "\n\n")
@@ -425,10 +454,10 @@ func renderGrouped(repositories []Repository) string {
 		}
 	}
 	if hasClean {
-		sb.WriteString("    Git Status: CLEAN\n")
+		sb.WriteString(reportIndent + "CLEAN\n")
 		for _, repository := range repositories {
 			if !repository.Dirty {
-				sb.WriteString(repositoryRow(repository))
+				sb.WriteString(reportIndent + repositoryRow(repository, width, false))
 			}
 		}
 	}
@@ -436,10 +465,10 @@ func renderGrouped(repositories []Repository) string {
 		if hasClean {
 			sb.WriteString("\n")
 		}
-		sb.WriteString("    Git Status: DIRTY\n")
+		sb.WriteString(reportIndent + "DIRTY\n")
 		for _, repository := range repositories {
 			if repository.Dirty {
-				sb.WriteString(repositoryRow(repository))
+				sb.WriteString(reportIndent + repositoryRow(repository, width, false))
 			}
 		}
 	}
@@ -447,20 +476,12 @@ func renderGrouped(repositories []Repository) string {
 }
 
 func printGrouped(repositories []Repository) {
-	fmt.Print(renderGrouped(repositories))
+	fmt.Print(renderGrouped(repositories, terminalWidth()))
 }
 
 func printCompact(repositories []Repository) {
 	fmt.Println()
 	for _, repository := range repositories {
-		status := repoStatus(repository)
-		fmt.Printf("[%s] %s (%s) %s", status, repository.Name, branchUpstreamLabel(repository), aheadBehindLabel(repository))
-		if cl := commitLabel(repository); cl != "" {
-			fmt.Printf(" | %s", cl)
-		}
-		if repository.LastCommitTime != "" {
-			fmt.Printf(" | %s", repository.LastCommitTime)
-		}
-		fmt.Println()
+		fmt.Print(repositoryRow(repository, terminalWidth(), true))
 	}
 }

@@ -435,6 +435,7 @@ func (b *browserState) render() {
 	}
 	lines := strings.Split(full, "\n")
 	var out strings.Builder
+	selLine := b.selectedRowLine()
 	for i, line := range lines {
 		if i == browseHeaderLine {
 			// The view indicator is navigation identity, not content: it
@@ -442,7 +443,16 @@ func (b *browserState) render() {
 			// Only body lines scroll.
 			out.WriteString(line)
 		} else {
-			out.WriteString(sliceViewport(line, b.offset, b.viewport))
+			sliced := sliceViewport(line, b.offset, b.viewport)
+			if i == selLine && isTerminal() {
+				// Reverse-video + bold is the selected-row highlight: it
+				// follows the sliced viewport, so horizontal scrolling keeps
+				// the visible part of the selection emphasized, and it does
+				// not rely on color as the sole distinction.
+				out.WriteString("\x1b[7;1m" + sliced + "\x1b[0m")
+			} else {
+				out.WriteString(sliced)
+			}
 		}
 		if i < len(lines)-1 {
 			out.WriteString("\n")
@@ -450,6 +460,27 @@ func (b *browserState) render() {
 	}
 	fmt.Print("\x1b[2J\x1b[H")
 	fmt.Print(out.String())
+}
+
+// selectedRowLine returns the index, within the current page's full rendered
+// content, of the currently selected row, or -1 when no selectable row is on
+// the page. Every list surface shares a constant two-line preamble (the view
+// header on line 0 and a blank separator on line 1); the commit-history page
+// additionally renders a Repository line and a blank line before its rows.
+func (b *browserState) selectedRowLine() int {
+	switch b.page {
+	case BrowseList:
+		if b.selected < 0 {
+			return -1
+		}
+		return 2 + (b.selected - b.listOffset)
+	case BrowseCommitHistory:
+		if b.selectedCommit < 0 {
+			return -1
+		}
+		return 4 + (b.selectedCommit - b.historyOffset)
+	}
+	return -1
 }
 
 func (b *browserState) renderHeader() string {
@@ -477,19 +508,22 @@ func (b *browserState) renderListContent() string {
 		end = len(b.repos)
 	}
 
-	nameW, branchW, upstreamW := overviewWidths(b.viewport)
+	// The List is an addressable index, not a full repository report: it
+	// shows identity, the single status signal, branch, and synchronization.
+	// Secondary facts (upstream path, commit identity) live in Detail and
+	// Activity. The selected row is marked with a leading pointer-like glyph
+	// and additionally highlighted by the renderer on a terminal.
+	nameW, branchW, _ := overviewWidths(b.viewport)
 	for i := start; i < end; i++ {
 		r := b.repos[i]
 		cursor := "  "
 		if i == b.selected {
-			cursor = "> "
+			cursor = "▸ "
 		}
-		// Compact row: identity, status, branch, upstream where appropriate.
-		row := fmt.Sprintf("%s%s[%-5s] %-*s %-*s %-*s %s",
-			reportIndent+cursor, "", repoStatus(r),
+		row := fmt.Sprintf("%s%s[%-5s] %-*s %-*s %s",
+			reportIndent, cursor, repoStatus(r),
 			nameW, r.Name,
 			branchW, branchLabel(r),
-			upstreamW, upstreamLabel(r),
 			aheadBehindLabel(r))
 		sb.WriteString(row + "\n")
 	}
@@ -515,7 +549,7 @@ func (b *browserState) renderCommitHistoryContent() string {
 		return sb.String()
 	}
 	if len(b.history) == 0 {
-		sb.WriteString(reportIndent + "No commits.\n\n")
+		sb.WriteString(reportIndent + "No commits\n\n")
 		sb.WriteString(reportIndent + "←/Esc back    q quit\n")
 		return sb.String()
 	}
@@ -530,7 +564,7 @@ func (b *browserState) renderCommitHistoryContent() string {
 		c := b.history[i]
 		cursor := "  "
 		if i == b.selectedCommit {
-			cursor = "> "
+			cursor = "▸ "
 		}
 		row := fmt.Sprintf("%s%s%s  %s  %s", reportIndent+cursor, shortHash(c.Hash), " ", c.Subject, c.AuthorDate)
 		// Simplified row; horizontal viewport reveals overflow.
@@ -755,10 +789,11 @@ func sliceViewport(s string, offset, width int) string {
 	return string(r[offset:end])
 }
 
-// renderBannerAndHeader emits the shared screen chrome: the KEEN banner, a
-// blank separator, the active-view line carrying the view label and page
-// counter, and a trailing blank separator. It is the single canonical source
-// for this chrome so every page renders an identical header.
+// renderBannerAndHeader emits the shared screen chrome: the active-view line
+// carrying the view label and page counter, followed by a blank separator. It
+// is the single canonical source for this chrome so every page renders an
+// identical header. No application banner is drawn; the header alone orients
+// the user on every repaint.
 func renderBannerAndHeader(page BrowsePage, width int) string {
 	var sb strings.Builder
 	title := "‹ " + page.label() + " ›"
@@ -840,8 +875,10 @@ func renderOverview(repos []Repository, totalDiscovered int, width int) string {
 		if len(rows) == 0 {
 			return
 		}
+		// The section heading carries the structural status signal, so rows
+		// beneath it need no per-repo status tag (mirroring the canonical
+		// grouped report). No decorative rule is drawn.
 		sb.WriteString(reportIndent + title + "\n")
-		sb.WriteString(reportIndent + dashes(width) + "\n\n")
 		for _, row := range rows {
 			sb.WriteString(row + "\n")
 		}
@@ -883,13 +920,14 @@ func renderActivity(repos []Repository, totalDiscovered int, width int) string {
 	return sb.String()
 }
 
-// renderOverviewRow presents the Overview contract: status, name, branch,
-// upstream, ahead, behind. The row is rendered at full content width (no field
-// truncation); the horizontal viewport reveals any content wider than the
-// terminal.
+// renderOverviewRow presents the Overview contract: name, branch, upstream,
+// ahead, behind. Status is conveyed structurally by the section heading, so
+// the row itself carries no status tag. The row is rendered at full content
+// width (no field truncation); the horizontal viewport reveals any content
+// wider than the terminal.
 func renderOverviewRow(r Repository, nameW, branchW, upstreamW int) string {
-	return fmt.Sprintf("%s[%-5s] %-*s %-*s %-*s %s",
-		reportIndent, repoStatus(r),
+	return fmt.Sprintf("%s%-*s %-*s %-*s %s",
+		reportIndent,
 		nameW, r.Name,
 		branchW, branchLabel(r),
 		upstreamW, upstreamLabel(r),
@@ -958,9 +996,11 @@ func renderActivityForSelected(repo Repository, width int) string {
 }
 
 func overviewWidths(width int) (int, int, int) {
-	avail := width - 22
-	if avail < 18 {
-		avail = 18
+	// Reserve room for the report indent, column separators, and the widest
+	// synchronization label; the per-row status tag was removed in v0.8.1.
+	avail := width - 15
+	if avail < 15 {
+		avail = 15
 	}
 	nameW := avail * 3 / 7
 	branchW := avail * 2 / 7

@@ -78,10 +78,12 @@ func TestRenderOverviewIncludesUpstream(t *testing.T) {
 	if !strings.Contains(out, "CLEAN") || !strings.Contains(out, "DIRTY") {
 		t.Errorf("expected CLEAN and DIRTY sections: %q", out)
 	}
-	if !strings.Contains(out, "[clean]") || !strings.Contains(out, "[dirty]") {
-		t.Errorf("expected [clean]/[dirty] tags: %q", out)
+	// Status is structural in the one-shot overview: the section headings are
+	// the single signal, so rows must not repeat per-repo tags.
+	if strings.Contains(out, "[clean]") || strings.Contains(out, "[dirty]") {
+		t.Errorf("overview rows must not carry per-repo status tags: %q", out)
 	}
-	// Overview contract: status, name, branch, upstream, ahead, behind.
+	// Overview contract: name, branch, upstream, ahead, behind.
 	if !strings.Contains(out, "v0.8.x") || !strings.Contains(out, "main") {
 		t.Errorf("expected branch tokens: %q", out)
 	}

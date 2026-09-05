@@ -185,19 +185,3 @@ func TestIntegrationChangedFiles(t *testing.T) {
 		}
 	})
 }
-
-// writeFileAndCommit writes content to relPath under dir and commits it,
-// returning the resulting commit hash.
-func writeFileAndCommit(t *testing.T, dir, relPath, content, message string) string {
-	t.Helper()
-	full := filepath.Join(dir, relPath)
-	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGitCommand(t, dir, "add", "-A")
-	runGitCommand(t, dir, "commit", "-m", message)
-	return strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
-}
