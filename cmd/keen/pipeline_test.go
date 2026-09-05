@@ -97,6 +97,19 @@ func runKeen(t *testing.T, workingDir string, env []string, args ...string) stri
 	return out.String()
 }
 
+// hasControlSequence reports whether s carries any terminal escape or control
+// output: ANSI ESC sequences, Ctrl+C, or other control characters beyond
+// printable text, horizontal tab, and newline. It is the shared gate for
+// asserting that redirected non-TTY output stays pure text.
+func hasControlSequence(s string) bool {
+	for _, r := range s {
+		if r == '\x1b' || r == '\x03' || (r < 0x20 && r != '\n' && r != '\t' && r != '\r') {
+			return true
+		}
+	}
+	return false
+}
+
 // TestKeenCLIHelper is the re-exec entry point shared by all CLI-level tests:
 // a helper subprocess that installs the requested arguments and runs the real
 // main(), then exits. Output is captured by the parent as the binary's report.
@@ -172,9 +185,10 @@ func TestMainPipelineE2E(t *testing.T) {
 }
 
 // TestNonTTYInteractiveFilterMatrix runs the real binary with -i under a
-// pipe (non-terminal stdin) across every selection flag and asserts the
-// portability contract (no terminal escape/control sequences) holds with the
-// filters genuinely applied end to end.
+// pipe (non-terminal stdin) with stdout captured as a pipe, across every
+// selection flag, and asserts the portability contract (no terminal
+// escape/control sequence in the redirected output) holds with the filters
+// genuinely applied end to end.
 func TestNonTTYInteractiveFilterMatrix(t *testing.T) {
 	type tc struct {
 		name string
@@ -224,10 +238,8 @@ func TestNonTTYInteractiveFilterMatrix(t *testing.T) {
 				t.Fatalf("subprocess failed: %v\nstderr: %s", err, errb.String())
 			}
 			res := out.String()
-			for _, r := range res {
-				if r == '\x1b' || r == '\x03' || (r < 0x20 && r != '\n' && r != '\t' && r != '\r') {
-					t.Fatalf("terminal escape/control sequence leaked in %s: %q", c.name, r)
-				}
+			if hasControlSequence(res) {
+				t.Fatalf("terminal escape/control sequence leaked in %s: %q", c.name, res)
 			}
 			for _, w := range c.want {
 				if !strings.Contains(res, w) {

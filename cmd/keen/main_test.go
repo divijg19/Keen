@@ -156,10 +156,8 @@ func TestInteractiveNonTTYNoEscape(t *testing.T) {
 	if out.Len() == 0 {
 		t.Fatal("expected one-shot List output, got none")
 	}
-	for _, r := range out.String() {
-		if r == '\x1b' || r == '\x03' || (r < 0x20 && r != '\n' && r != '\t' && r != '\r') {
-			t.Fatalf("terminal escape/control sequence leaked into non-TTY output: %q", r)
-		}
+	if hasControlSequence(out.String()) {
+		t.Fatalf("terminal escape/control sequence leaked into non-TTY output: %q", out.String())
 	}
 	if !strings.Contains(out.String(), "‹ LIST ›") {
 		t.Errorf("one-shot output missing List header: %q", out.String())

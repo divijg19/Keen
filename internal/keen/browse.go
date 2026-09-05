@@ -444,7 +444,7 @@ func (b *browserState) render() {
 			out.WriteString(line)
 		} else {
 			sliced := sliceViewport(line, b.offset, b.viewport)
-			if i == selLine && isTerminal() {
+			if i == selLine && isStdoutTerminal() {
 				// Reverse-video + bold is the selected-row highlight: it
 				// follows the sliced viewport, so horizontal scrolling keeps
 				// the visible part of the selection emphasized, and it does
@@ -458,7 +458,11 @@ func (b *browserState) render() {
 			out.WriteString("\n")
 		}
 	}
-	fmt.Print("\x1b[2J\x1b[H")
+	// The screen-control clear is an interactive-presentation concern only;
+	// it is emitted on a real terminal and never on redirected stdout.
+	if isStdoutTerminal() {
+		fmt.Print("\x1b[2J\x1b[H")
+	}
 	fmt.Print(out.String())
 }
 
@@ -718,11 +722,27 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 
 // isTerminal reports whether stdin is attached to a character device (a real
 // terminal) rather than a pipe, file, or other redirected stream. It is the
-// portable gate between interactive rendering and the deterministic one-shot
-// overview: keeping control sequences out of redirected output relies on this
-// check on every platform, including those where makeRaw is a no-op.
+// portable gate between interactive browsing and the deterministic one-shot
+// overview, checked on every platform including those where makeRaw is a
+// no-op. Unlike isStdoutTerminal it inspects stdin, which is the stream the
+// interactive session reads from.
 func isTerminal() bool {
-	info, err := os.Stdin.Stat()
+	return isCharDevice(os.Stdin)
+}
+
+// isStdoutTerminal reports whether stdout is attached to a character device (a
+// real terminal) rather than a pipe, file, or other redirected stream. Control
+// sequences (screen clearing, row highlighting) are interactive-presentation
+// concerns and are emitted only when stdout is a terminal, so redirected and
+// piped output stays pure text.
+func isStdoutTerminal() bool {
+	return isCharDevice(os.Stdout)
+}
+
+// isCharDevice reports whether the given stream is attached to a character
+// device (a terminal) rather than a pipe, file, or other redirected stream.
+func isCharDevice(f *os.File) bool {
+	info, err := f.Stat()
 	if err != nil {
 		return false
 	}
@@ -737,8 +757,10 @@ func isTerminal() bool {
 // Activity is contextual to the selected repository.
 //
 // Terminal handling uses the standard library only (no added dependencies).
-// When the input is not a terminal, Browse degrades to a single static List
-// render so the command still produces useful, portable output.
+// When stdin is not a terminal, Browse degrades to a single static List render
+// so the command still produces useful, portable output. Control sequences
+// (screen clearing, row highlighting) are gated on stdout being a terminal, so
+// redirected output never carries ANSI escapes even when stdin is a terminal.
 func Browse(repos []Repository, totalDiscovered int) {
 	width := terminalWidth()
 	if !isTerminal() {
