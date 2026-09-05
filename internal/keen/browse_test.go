@@ -1022,7 +1022,8 @@ func TestRenderChangedFilesSpecialCharacters(t *testing.T) {
 
 // TestBrowseNonTTY pins the script compatibility contract: when stdin is not a
 // terminal (e.g. redirected from a pipe), keen -i (Browse) prints a one-shot
-// static overview and exits immediately without attempting terminal control.
+// static overview and exits immediately. Its output must be pure text with no
+// ANSI control or escape sequence (screen clearing, highlighting, or otherwise).
 func TestBrowseNonTTY(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -1045,7 +1046,19 @@ func TestBrowseNonTTY(t *testing.T) {
 	if !strings.Contains(out, "‹ LIST ›") {
 		t.Errorf("non-TTY browse must output static list view, got:\n%q", out)
 	}
-	if strings.Contains(out, "\x1b[2J") {
-		t.Errorf("non-TTY browse must not emit clear-screen escape sequences:\n%q", out)
+	if containsControlSequence(out) {
+		t.Errorf("non-TTY browse output contains a terminal control sequence:\n%q", out)
 	}
+}
+
+// containsControlSequence reports whether s carries any terminal escape or
+// control output: ANSI CSI/ESC sequences, Ctrl+C, or other control characters
+// beyond printable text, horizontal tab, and newline.
+func containsControlSequence(s string) bool {
+	for _, r := range s {
+		if r == '\x1b' || r == '\x03' || (r < 0x20 && r != '\n' && r != '\t' && r != '\r') {
+			return true
+		}
+	}
+	return false
 }
