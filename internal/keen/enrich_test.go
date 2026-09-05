@@ -300,30 +300,3 @@ func TestParseAheadBehind(t *testing.T) {
 		})
 	}
 }
-
-func initTestGitRepo(t *testing.T, dir string) {
-	t.Helper()
-	runGitCommand(t, dir, "init", "-q")
-	runGitCommand(t, dir, "config", "user.email", "test@keen.test")
-	runGitCommand(t, dir, "config", "user.name", "Keen Test")
-}
-
-func runGitCommand(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmdArgs := append([]string{"-C", dir}, args...)
-	cmd := exec.Command("git", cmdArgs...)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("git %v failed in %s: %v", args, dir, err)
-	}
-}
-
-func runGitOutput(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmdArgs := append([]string{"-C", dir}, args...)
-	cmd := exec.Command("git", cmdArgs...)
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git %v failed in %s: %v", args, dir, err)
-	}
-	return string(output)
-}

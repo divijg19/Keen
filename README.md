@@ -27,7 +27,7 @@ Run `keen` from any directory containing Git repositories. The report opens with
 | `--compact`  | Compact one-line layout (canonical report only).                  |
 | `-r`         | Rich textual report.                                              |
 | `-i`         | Interactive repository investigation.                             |
-| `-version`   | Print the version (e.g. `keen v0.7.2`) and exit.                  |
+| `-version`   | Print the version (e.g. `keen v0.8.1`) and exit.                |
 | `--help`     | Print usage.                                                      |
 
 `-version` prints the release version and exits without scanning or inspecting any repository.
@@ -50,7 +50,7 @@ Selecting a mode never changes which repositories are shown. `--clean`, `--dirty
 
 | Surface        | Answers                                    | Shows                                                        |
 | -------------- | ------------------------------------------ | ------------------------------------------------------------ |
-| List           | Which repositories exist?                  | identity, status, branch, upstream/synchronization            |
+| List           | Which repositories exist?                  | identity, status, branch, synchronization                     |
 | Detail         | What is this repository?                   | name, path, status, branch, upstream, ahead, behind, last commit |
 | Activity       | What happened recently in this repository? | repository, hash, subject, relative time (selected repo)    |
 | Commit History | What happened before the latest commit?    | recent commits (hash, subject, author, date)                |
@@ -59,7 +59,7 @@ Selecting a mode never changes which repositories are shown. `--clean`, `--dirty
 
 Commit History shows the latest **20 commits** of the selected repository.
 
-List is an addressable index: each row carries enough to select the correct repository. Detail shows the full repository path plus working state and synchronization. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none). The surfaces form a strict hierarchy (`List → Detail → Activity → Commit History → Commit Detail → Changed Files`): `Enter` descends one level, `←`/`Esc` ascend one level, and Changed Files is the deepest — pressing anything past it never wraps around to List.
+List is an addressable index: each row carries one status tag, branch, and synchronization — enough to select the correct repository — with the selected row marked by a `▸` pointer and a reverse-video highlight on a terminal. Detail (not the List) carries the upstream path. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none). The surfaces form a strict hierarchy (`List → Detail → Activity → Commit History → Commit Detail → Changed Files`): `Enter` descends one level, `←`/`Esc` ascend one level, and Changed Files is the deepest — pressing anything past it never wraps around to List.
 
 | Key             | Action                                  |
 | --------------- | --------------------------------------- |
@@ -68,7 +68,7 @@ List is an addressable index: each row carries enough to select the correct repo
 | `←`/`Esc`       | Return to the parent (Changed Files → Commit Detail → Commit History → Activity → Detail → List) |
 | `q` / `Ctrl+C`  | Quit                                    |
 
-A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 6`, etc.) identifies the active view and position. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.
+A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 6`, etc.) identifies the active view and position; the selection highlight tracks the viewport so the visible part of the selected row stays emphasized. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.
 
 When stdin is not a terminal (e.g. `keen -i < input`), `keen -i` prints a one-shot overview and exits, preserving script compatibility.
 
@@ -92,27 +92,27 @@ Supported `--recent` units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days
 
 ## Output
 
-Grouped mode prints a `Git Status: CLEAN` / `Git Status: DIRTY` section only when that section contains at least one repository:
+Grouped mode is status-as-structure: a workspace summary line, then `CLEAN` / `DIRTY` section headings — each shown only when it contains at least one repository. The heading is the status signal, so rows carry no per-repo `[clean]`/`[dirty]` tag beneath it:
 
 ```text
 ===KEEN===
 
-    Git Status: CLEAN
----------------------------
-[clean] project-a       (main → origin/main) ↑0 ↓0  | 4e02b68 add temporal repository filtering | 2 days ago
+    2 repositories, 1 clean, 1 dirty
 
-    Git Status: DIRTY
----------------------------
-[dirty] project-b       (feature/x → origin/feature/x) ↑1 ↓0  | a1b2c3d fix parser panic | 5 minutes ago
+    CLEAN
+    project-a  (main → origin/main) ↑0 ↓0  | 4e02b68 add temporal repository filtering | 2 days ago
+
+    DIRTY
+    project-b  (feature/x → origin/feature/x) ↑1 ↓0  | a1b2c3d fix parser panic | 5 minutes ago
 ```
 
-Each row reports the branch, the configured upstream (`branch → upstream`), commits ahead/behind that upstream (`↑n ↓n`), the latest commit (seven-character short hash plus subject), and the commit's relative time.
+Each row reports the branch, the configured upstream (`branch → upstream`), commits ahead/behind that upstream (`↑n ↓n`), the latest commit (seven-character short hash plus subject), and the commit's relative time. On narrow terminals the row drops the time, then the commit detail, before the base identity facts — which are never truncated. `--compact` is the flat variant: one line per repository, where the per-row `[clean]`/`[dirty]` tag is the status signal.
 
 If no repositories exist, `keen` prints `No repositories found.` If repositories exist but none match the active filters, it prints `No repositories match the selected filters.`
 
 ### Rich report
 
-`keen -r` presents the same facts as an aligned column table (status, name, branch, upstream, ahead, behind, hash, subject, time). The table adapts deterministically to terminal width — columns tighten first, lower-priority columns are dropped next, and on very narrow terminals `keen -r` renders the canonical grouped report. The same repository state at the same width always produces identical output.
+`keen -r` presents the same facts as an aligned column table (name, branch, upstream, ahead, behind, hash, subject, time — status is carried structurally by the `CLEAN`/`DIRTY` section headings, with no `STATUS` column). The table adapts deterministically to terminal width: columns tighten first, lower-priority columns are dropped next (TIME, then SUBJECT, then ahead/behind as a pair), and on very narrow terminals `keen -r` renders the canonical grouped report. The same repository state at the same width always produces identical output.
 
 ## Repository identity
 

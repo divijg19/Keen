@@ -41,16 +41,21 @@ func TestRenderRichColumns(t *testing.T) {
 
 	out := renderRich(repos, len(repos), 160)
 
-	for _, col := range []string{"STATUS", "NAME", "BRANCH", "UPSTREAM", "AHEAD", "BEHIND", "HASH", "SUBJECT", "TIME"} {
+	for _, col := range []string{"NAME", "BRANCH", "UPSTREAM", "AHEAD", "BEHIND", "HASH", "SUBJECT", "TIME"} {
 		if !strings.Contains(out, col) {
 			t.Errorf("rich report missing column header %q: %q", col, out)
 		}
 	}
-
-	// Status, name, branch, upstream, ahead/behind, short hash, subject, time.
-	if !strings.Contains(out, "clean") || !strings.Contains(out, "dirty") {
-		t.Errorf("expected status values: %q", out)
+	// Status is structural: the CLEAN/DIRTY section headings are the single
+	// signal, so the table itself must not repeat it as a column.
+	if strings.Contains(out, "STATUS") {
+		t.Errorf("rich report must not contain a STATUS column: %q", out)
 	}
+	if !strings.Contains(out, "    CLEAN\n") || !strings.Contains(out, "    DIRTY\n") {
+		t.Errorf("rich report missing CLEAN/DIRTY section headings: %q", out)
+	}
+
+	// Name, branch, upstream, ahead/behind, short hash, subject, time.
 	if !strings.Contains(out, "Peony") || !strings.Contains(out, "Zinnia") || !strings.Contains(out, "Tulip") {
 		t.Errorf("expected repository names: %q", out)
 	}
@@ -94,7 +99,7 @@ func TestRenderRichDeterministicTruncation(t *testing.T) {
 		LastCommitSubject: long,
 		LastCommitTime:    "1 day ago",
 	}
-	out := renderRich([]Repository{repo}, 1, 40)
+	out := renderRich([]Repository{repo}, 1, 80)
 
 	if !strings.Contains(out, "…") {
 		t.Errorf("expected truncation ellipsis in narrow rich report: %q", out)
@@ -169,19 +174,17 @@ func hasHeader(cols []richColumn, name string) bool {
 // report indent (content budget = terminal width - 4).
 //
 // Widths are boundary triplets (N-1/N/N+1) around each measured transition
-// (fallback|table = 50, SUBJECT-drop = 57, nine-column = 70, wide = 103)
-// rather than arbitrary samples. Two intentional behaviors of the current
-// design are asserted here: rule lines span exactly the terminal width via
-// slack distribution (not merely "close to" it), and the generous subject
-// floor never overflows its proportional share near the wide threshold.
+// (fallback|table = 50, TIME-drop|eight-column = 62, wide = 95) rather than
+// arbitrary samples. Status is structural: with the STATUS column removed in
+// v0.8.1 the table spans fewer columns, so every threshold shifts left and a
+// full eight-column table fits from terminal width 62.
 func TestRenderRichWidthMatrix(t *testing.T) {
 	repos := richMatrixFixture()
 	widths := []int{
 		40,         // deep fallback probe
-		49, 50, 51, // fallback | shallow table
-		56, 57, 58, // TIME dropped | kept
-		69, 70, 71, // adaptive nine | full nine threshold
-		98, 102, 103, 104, // adaptive | wide proportional
+		49, 50, 51, // fallback | shallow 7-column table
+		61, 62, 63, // 7-column | full eight-column threshold
+		94, 95, 96, // tight adaptive | wide proportional
 		120, 200, // comfortable wide probes
 	}
 
@@ -195,7 +198,7 @@ func TestRenderRichWidthMatrix(t *testing.T) {
 				// rendering, no table headers. Canonical output is unconstrained
 				// prose (it wraps naturally in real terminals), so the width cap
 				// applies to tables only.
-				if want := renderGrouped(repos); out != want {
+				if want := renderGrouped(repos, width); out != want {
 					t.Errorf("fallback at width %d is not the canonical grouped report", width)
 				}
 				if strings.Contains(out, "SUBJECT") || strings.Contains(out, "UPSTREAM") {
@@ -222,9 +225,13 @@ func TestRenderRichWidthMatrix(t *testing.T) {
 				t.Errorf("no rule line in table output: %q", out)
 			}
 
-			// STATUS and NAME are never dropped; AHEAD/BEHIND are atomic.
-			if !hasHeader(cols, "STATUS") || !hasHeader(cols, "NAME") {
-				t.Errorf("STATUS/NAME dropped at width %d: %+v", width, cols)
+			// NAME is never dropped; STATUS must never appear (structural);
+			// AHEAD/BEHIND are atomic.
+			if !hasHeader(cols, "NAME") {
+				t.Errorf("NAME dropped at width %d: %+v", width, cols)
+			}
+			if hasHeader(cols, "STATUS") {
+				t.Errorf("STATUS column present at width %d: %+v", width, cols)
 			}
 			if hasHeader(cols, "AHEAD") != hasHeader(cols, "BEHIND") {
 				t.Errorf("sync pair split at width %d: %+v", width, cols)
@@ -232,19 +239,19 @@ func TestRenderRichWidthMatrix(t *testing.T) {
 
 			// Degradation ladder (measured boundaries, indent included).
 			switch {
-			case width >= 70:
+			case width >= 95:
 				if !hasHeader(cols, "SUBJECT") || !hasHeader(cols, "TIME") {
-					t.Errorf("width %d: expected full nine-column set, got %+v", width, cols)
+					t.Errorf("width %d: expected wide eight-column set, got %+v", width, cols)
 				}
-			case width >= 57:
-				if !hasHeader(cols, "SUBJECT") || hasHeader(cols, "TIME") {
-					t.Errorf("width %d: expected SUBJECT kept and TIME dropped, got %+v", width, cols)
+			case width >= 62:
+				if !hasHeader(cols, "SUBJECT") || !hasHeader(cols, "TIME") {
+					t.Errorf("width %d: expected full eight-column tight set, got %+v", width, cols)
 				}
 			case width >= 50:
-				if hasHeader(cols, "TIME") || hasHeader(cols, "SUBJECT") {
-					t.Errorf("width %d: expected TIME+SUBJECT dropped, got %+v", width, cols)
+				if hasHeader(cols, "TIME") || !hasHeader(cols, "SUBJECT") {
+					t.Errorf("width %d: expected SUBJECT kept and TIME dropped, got %+v", width, cols)
 				}
-				for _, h := range []string{"BRANCH", "UPSTREAM", "AHEAD", "BEHIND", "HASH"} {
+				for _, h := range []string{"NAME", "BRANCH", "UPSTREAM", "AHEAD", "BEHIND", "HASH", "SUBJECT"} {
 					if !hasHeader(cols, h) {
 						t.Errorf("width %d: shallow table lost %s: %+v", width, h, cols)
 					}

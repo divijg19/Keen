@@ -74,11 +74,3 @@ func TestDiscover_NonExistentRoot(t *testing.T) {
 		t.Errorf("expected error when discovering non-existent root, got nil")
 	}
 }
-
-func mustCreateGitRepo(t *testing.T, path string) {
-	t.Helper()
-	gitDir := filepath.Join(path, ".git")
-	if err := os.MkdirAll(gitDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-}

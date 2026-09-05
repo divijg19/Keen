@@ -71,14 +71,19 @@ func TestPrint(t *testing.T) {
 		out := captureOutput(func() {
 			Print(repos, OutputGrouped, len(repos))
 		})
-		if !strings.Contains(out, "Git Status: CLEAN") {
-			t.Errorf("missing CLEAN header in output: %q", out)
+		if !strings.Contains(out, "    CLEAN\n") {
+			t.Errorf("missing CLEAN section heading in output: %q", out)
 		}
-		if !strings.Contains(out, "Git Status: DIRTY") {
-			t.Errorf("missing DIRTY header in output: %q", out)
+		if !strings.Contains(out, "    DIRTY\n") {
+			t.Errorf("missing DIRTY section heading in output: %q", out)
 		}
 		if !strings.Contains(out, "my-clean") || !strings.Contains(out, "my-dirty") {
 			t.Errorf("missing repo names in output: %q", out)
+		}
+		// Status is structural in the grouped report: the section heading is
+		// the single status signal, never duplicated per row.
+		if strings.Contains(out, "[clean]") || strings.Contains(out, "[dirty]") {
+			t.Errorf("grouped rows must not carry per-repo status tags: %q", out)
 		}
 	})
 
@@ -89,11 +94,11 @@ func TestPrint(t *testing.T) {
 		out := captureOutput(func() {
 			Print(repos, OutputGrouped, len(repos))
 		})
-		if !strings.Contains(out, "Git Status: CLEAN") {
-			t.Errorf("missing CLEAN header: %q", out)
+		if !strings.Contains(out, "    CLEAN\n") {
+			t.Errorf("missing CLEAN heading: %q", out)
 		}
-		if strings.Contains(out, "Git Status: DIRTY") {
-			t.Errorf("unexpected DIRTY header in clean-only output: %q", out)
+		if strings.Contains(out, "    DIRTY\n") {
+			t.Errorf("unexpected DIRTY heading in clean-only output: %q", out)
 		}
 	})
 
@@ -105,8 +110,8 @@ func TestPrint(t *testing.T) {
 		out := captureOutput(func() {
 			Print(repos, OutputCompact, len(repos))
 		})
-		if strings.Contains(out, "Git Status: CLEAN") || strings.Contains(out, "Git Status: DIRTY") {
-			t.Errorf("compact output should not contain section headers: %q", out)
+		if strings.Contains(out, "\n    CLEAN\n") || strings.Contains(out, "\n    DIRTY\n") {
+			t.Errorf("compact output should not contain section headings: %q", out)
 		}
 		if !strings.Contains(out, "[clean]") || !strings.Contains(out, "[dirty]") {
 			t.Errorf("missing status tags in compact output: %q", out)
@@ -120,9 +125,7 @@ func TestPrint(t *testing.T) {
 		repos := []Repository{
 			{Name: "my-clean", Branch: "main", Upstream: "origin/main", Dirty: false, LastCommitTime: "1 day ago", LastCommitHash: "abcdef1234567890", LastCommitSubject: "initial commit"},
 		}
-		out := captureOutput(func() {
-			Print(repos, OutputGrouped, len(repos))
-		})
+		out := renderGrouped(repos, 0)
 		if !strings.Contains(out, "main → origin/main") {
 			t.Errorf("expected upstream relationship in output: %q", out)
 		}
@@ -138,9 +141,7 @@ func TestPrint(t *testing.T) {
 		repos := []Repository{
 			{Name: "my-clean", Branch: "main", Upstream: "origin/main", Dirty: false, LastCommitTime: "1 day ago", LastCommitHash: "abcdef1234567890", LastCommitSubject: "initial commit"},
 		}
-		out := captureOutput(func() {
-			Print(repos, OutputCompact, len(repos))
-		})
+		out := repositoryRow(repos[0], 0, true)
 		if !strings.Contains(out, "main → origin/main") {
 			t.Errorf("expected upstream relationship in compact output: %q", out)
 		}
@@ -167,9 +168,7 @@ func TestPrint(t *testing.T) {
 	t.Run("subject truncation is bounded but canonical value untouched", func(t *testing.T) {
 		longSubject := strings.Repeat("x", 60)
 		repo := Repository{Name: "my-clean", Branch: "main", Upstream: "", Dirty: false, LastCommitTime: "1 day ago", LastCommitHash: "abcdef1234567890", LastCommitSubject: longSubject}
-		out := captureOutput(func() {
-			Print([]Repository{repo}, OutputGrouped, 1)
-		})
+		out := renderGrouped([]Repository{repo}, 0)
 		if repo.LastCommitSubject != longSubject {
 			t.Errorf("canonical LastCommitSubject must be untouched, got %q", repo.LastCommitSubject)
 		}
@@ -197,9 +196,7 @@ func TestPrint(t *testing.T) {
 		repos := []Repository{
 			{Name: "my-clean", Branch: "main", Upstream: "origin/main", Dirty: false, LastCommitTime: "1 day ago", LastCommitHash: "abcdef1234567890", LastCommitSubject: "initial commit"},
 		}
-		out := captureOutput(func() {
-			Print(repos, OutputGrouped, len(repos))
-		})
+		out := renderGrouped(repos, 0)
 		if !strings.Contains(out, "abcdef1 initial commit | 1 day ago") {
 			t.Errorf("expected commit identity before relative time, got: %q", out)
 		}
@@ -209,9 +206,7 @@ func TestPrint(t *testing.T) {
 		repos := []Repository{
 			{Name: "my-clean", Branch: "main", Upstream: "origin/main", Dirty: false, LastCommitTime: "1 day ago", LastCommitHash: "abcdef1234567890", LastCommitSubject: "initial commit"},
 		}
-		out := captureOutput(func() {
-			Print(repos, OutputCompact, len(repos))
-		})
+		out := repositoryRow(repos[0], 0, true)
 		if !strings.Contains(out, "abcdef1 initial commit | 1 day ago") {
 			t.Errorf("expected commit identity before relative time, got: %q", out)
 		}
@@ -220,9 +215,7 @@ func TestPrint(t *testing.T) {
 	t.Run("Unicode subject truncation is rune-safe", func(t *testing.T) {
 		longSubject := strings.Repeat("世", 60)
 		repo := Repository{Name: "my-clean", Branch: "main", Upstream: "", Dirty: false, LastCommitTime: "1 day ago", LastCommitHash: "abcdef1234567890", LastCommitSubject: longSubject}
-		out := captureOutput(func() {
-			Print([]Repository{repo}, OutputGrouped, 1)
-		})
+		out := renderGrouped([]Repository{repo}, 0)
 		if repo.LastCommitSubject != longSubject {
 			t.Errorf("canonical LastCommitSubject must be untouched, got %q", repo.LastCommitSubject)
 		}
@@ -329,7 +322,7 @@ func TestWorkspaceSummary(t *testing.T) {
 			if got := workspaceSummary(tc.repos); got != tc.want {
 				t.Errorf("workspaceSummary = %q, want %q", got, tc.want)
 			}
-			grouped := renderGrouped(tc.repos)
+			grouped := renderGrouped(tc.repos, 0)
 			if !strings.Contains(grouped, tc.want) {
 				t.Errorf("grouped report missing summary %q:\n%s", tc.want, grouped)
 			}
@@ -375,7 +368,7 @@ func TestRendererFactContract(t *testing.T) {
 		{Name: "detached", Branch: "", Upstream: "", Dirty: false, LastCommitHash: "deadbee0123456", LastCommitSubject: "detached work", LastCommitTime: "3 days ago"},
 		{Name: "empty", Branch: "main", Upstream: "", Dirty: false},
 	}
-	canonical := renderGrouped(repos)
+	canonical := renderGrouped(repos, 0)
 	rich := renderRich(repos, len(repos), 200)
 	browseList := renderBrowse(repos, len(repos), BrowseList, 200)
 
