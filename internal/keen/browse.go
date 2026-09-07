@@ -24,6 +24,7 @@ const (
 	keyUp
 	keyDown
 	keyEnter
+	keyFilter
 )
 
 // BrowsePage identifies the active surface of the interactive investigation.
@@ -32,13 +33,12 @@ type BrowsePage int
 const (
 	BrowseList BrowsePage = iota
 	BrowseDetail
-	BrowseActivity
 	BrowseCommitHistory
 	BrowseCommitDetail
 	BrowseChangedFiles
 )
 
-const browsePageCount = 6
+const browsePageCount = 5
 
 func (p BrowsePage) label() string {
 	switch p {
@@ -46,8 +46,6 @@ func (p BrowsePage) label() string {
 		return "LIST"
 	case BrowseDetail:
 		return "DETAIL"
-	case BrowseActivity:
-		return "ACTIVITY"
 	case BrowseCommitHistory:
 		return "HISTORY"
 	case BrowseCommitDetail:
@@ -66,6 +64,8 @@ func (p BrowsePage) label() string {
 // ←/Esc return to the parent, and there is no wrap-around "next view" key.
 func interpretSequence(seq string) keyAction {
 	switch seq {
+	case "/":
+		return keyFilter
 	case "\x1b[D":
 		return keyLeft
 	case "H", "\x1b[1;2D", "\x1b[1;5D":
@@ -105,6 +105,7 @@ const browseChromeRows = 5
 // session. It deliberately models distinct values for selection, vertical
 // viewport, and horizontal viewport.
 type browserState struct {
+	allRepos           []Repository
 	repos              []Repository
 	total              int
 	page               BrowsePage
@@ -120,6 +121,8 @@ type browserState struct {
 	changedFilesOffset int
 	historyErr         string
 	changedFilesErr    string
+	filtering          bool
+	filterQuery        string
 }
 
 func newBrowserState(repos []Repository, total int) *browserState {
@@ -128,6 +131,7 @@ func newBrowserState(repos []Repository, total int) *browserState {
 		selected = 0
 	}
 	return &browserState{
+		allRepos:       repos,
 		repos:          repos,
 		total:          total,
 		page:           BrowseList,
@@ -136,6 +140,23 @@ func newBrowserState(repos []Repository, total int) *browserState {
 		viewport:       terminalWidth(),
 		viewportHeight: terminalHeight(),
 	}
+}
+
+func (b *browserState) applyFilter() {
+	if b.filterQuery == "" {
+		b.repos = b.allRepos
+	} else {
+		q := strings.ToLower(b.filterQuery)
+		var matched []Repository
+		for _, r := range b.allRepos {
+			if strings.Contains(strings.ToLower(r.Name), q) || strings.Contains(strings.ToLower(r.Branch), q) {
+				matched = append(matched, r)
+			}
+		}
+		b.repos = matched
+	}
+	b.clampSelection()
+	b.ensureVisible()
 }
 
 func (b *browserState) clampSelection() {
@@ -320,12 +341,6 @@ func (b *browserState) contentWidth() int {
 		} else {
 			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 		}
-	case BrowseActivity:
-		if repo := b.selectedRepo(); repo != nil {
-			full = renderActivityForSelected(*repo, b.viewport)
-		} else {
-			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
-		}
 	case BrowseCommitHistory:
 		full = b.renderCommitHistoryContent()
 	case BrowseCommitDetail:
@@ -353,7 +368,7 @@ func (b *browserState) contentWidth() int {
 	}
 	max := 0
 	for _, line := range strings.Split(full, "\n") {
-		if w := len([]rune(line)); w > max {
+		if w := stringCellWidth(line); w > max {
 			max = w
 		}
 	}
@@ -391,14 +406,6 @@ func (b *browserState) render() {
 		if repo := b.selectedRepo(); repo != nil {
 			full = renderDetail(*repo)
 			// Wrap detail with the view header for consistency.
-			header := b.renderHeader()
-			full = header + full
-		} else {
-			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
-		}
-	case BrowseActivity:
-		if repo := b.selectedRepo(); repo != nil {
-			full = renderActivityForSelected(*repo, b.viewport)
 			header := b.renderHeader()
 			full = header + full
 		} else {
@@ -496,6 +503,10 @@ func (b *browserState) renderHeader() string {
 func (b *browserState) renderListContent() string {
 	var sb strings.Builder
 	sb.WriteString(renderBannerAndHeader(b.page, b.viewport))
+
+	if b.filterQuery != "" {
+		sb.WriteString(reportIndent + "filter: " + b.filterQuery + "\n\n")
+	}
 
 	if len(b.repos) == 0 {
 		sb.WriteString(reportIndent + emptyMessage(b.total) + "\n\n")
@@ -662,10 +673,6 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 					b.render()
 				}
 			case BrowseDetail:
-				b.page = BrowseActivity
-				b.offset = 0
-				b.render()
-			case BrowseActivity:
 				b.loadHistoryForSelected()
 				b.page = BrowseCommitHistory
 				b.offset = 0
@@ -688,12 +695,8 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 				b.page = BrowseList
 				b.offset = 0
 				b.render()
-			case BrowseActivity:
-				b.page = BrowseDetail
-				b.offset = 0
-				b.render()
 			case BrowseCommitHistory:
-				b.page = BrowseActivity
+				b.page = BrowseDetail
 				b.offset = 0
 				b.render()
 			case BrowseCommitDetail:
@@ -715,6 +718,11 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 			b.render()
 		case keyQuit:
 			return
+		case keyFilter:
+			if b.page == BrowseList {
+				b.filtering = true
+				b.render()
+			}
 		}
 		// Unknown keys (keyNone) are ignored.
 	}
@@ -820,7 +828,7 @@ func renderBannerAndHeader(page BrowsePage, width int) string {
 	var sb strings.Builder
 	title := "‹ " + page.label() + " ›"
 	indicator := fmt.Sprintf("%d / %d", int(page)+1, browsePageCount)
-	pad := width - len([]rune(title)) - len([]rune(indicator))
+	pad := width - stringCellWidth(title) - stringCellWidth(indicator)
 	if pad < 0 {
 		pad = 0
 	}
@@ -850,8 +858,6 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 		} else {
 			sb.WriteString(renderOverview(repos, totalDiscovered, width))
 		}
-	case BrowseActivity:
-		sb.WriteString(renderActivity(repos, totalDiscovered, width))
 	case BrowseCommitHistory:
 		sb.WriteString(reportIndent + "Commit history requires interactive selection.\n")
 	case BrowseCommitDetail:
@@ -866,8 +872,8 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 	switch page {
 	case BrowseList:
 		hint = "↑/↓ select    Enter inspect    q quit"
-	case BrowseDetail, BrowseActivity:
-		hint = "←/Esc back    q quit"
+	case BrowseDetail:
+		hint = "Enter history    ←/Esc back    q quit"
 	case BrowseCommitHistory:
 		hint = "↑/↓ select    Enter detail    ←/Esc back    q quit"
 	case BrowseCommitDetail:
@@ -912,36 +918,6 @@ func renderOverview(repos []Repository, totalDiscovered int, width int) string {
 	return sb.String()
 }
 
-func renderActivity(repos []Repository, totalDiscovered int, width int) string {
-	if len(repos) == 0 {
-		return reportIndent + emptyMessage(totalDiscovered) + "\n"
-	}
-
-	var sb strings.Builder
-
-	writeSection := func(title string, dirty bool) {
-		var entries []string
-		for _, r := range repos {
-			if r.Dirty == dirty {
-				entries = append(entries, activityEntry(r))
-			}
-		}
-		if len(entries) == 0 {
-			return
-		}
-		sb.WriteString(reportIndent + title + "\n")
-		sb.WriteString(reportIndent + dashes(width) + "\n\n")
-		for _, e := range entries {
-			sb.WriteString(e)
-		}
-		sb.WriteString("\n")
-	}
-
-	writeSection("CLEAN", false)
-	writeSection("DIRTY", true)
-	return sb.String()
-}
-
 // renderOverviewRow presents the Overview contract: name, branch, upstream,
 // ahead, behind. Status is conveyed structurally by the section heading, so
 // the row itself carries no status tag. The row is rendered at full content
@@ -954,23 +930,6 @@ func renderOverviewRow(r Repository, nameW, branchW, upstreamW int) string {
 		branchW, branchLabel(r),
 		upstreamW, upstreamLabel(r),
 		aheadBehindLabel(r))
-}
-
-// activityEntry presents the Activity contract: name, short hash, subject,
-// relative commit time. When a repository has no commits it shows "No commits".
-// The subject is shown in full; the horizontal viewport handles width.
-func activityEntry(r Repository) string {
-	var sb strings.Builder
-	sb.WriteString(reportIndent + r.Name + "\n")
-
-	if r.LastCommitHash == "" {
-		sb.WriteString(reportIndent + "  No commits\n")
-		return sb.String()
-	}
-
-	sb.WriteString(reportIndent + "  " + shortHash(r.LastCommitHash) + "  " + r.LastCommitSubject + "\n")
-	sb.WriteString(reportIndent + "  " + r.LastCommitTime + "\n")
-	return sb.String()
 }
 
 // renderDetail renders the bounded repository detail view for one selected
@@ -1003,20 +962,6 @@ func renderDetail(repo Repository) string {
 	return sb.String()
 }
 
-// renderActivityForSelected renders Activity contextual to the selected repository.
-func renderActivityForSelected(repo Repository, width int) string {
-	var sb strings.Builder
-	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n\n")
-	if repo.LastCommitHash == "" {
-		sb.WriteString(reportIndent + "  No commits\n")
-		return sb.String()
-	}
-	sb.WriteString(reportIndent + "  " + shortHash(repo.LastCommitHash) + "  " + repo.LastCommitSubject + "\n")
-	sb.WriteString(reportIndent + "  " + repo.LastCommitTime + "\n")
-	_ = width
-	return sb.String()
-}
-
 func overviewWidths(width int) (int, int, int) {
 	// Reserve room for the report indent, column separators, and the widest
 	// synchronization label; the per-row status tag was removed in v0.8.1.
@@ -1046,17 +991,6 @@ func overviewWidths(width int) (int, int, int) {
 		upstreamW = 24
 	}
 	return nameW, branchW, upstreamW
-}
-
-func dashes(width int) string {
-	n := width - len([]rune(reportIndent))
-	if n < 8 {
-		n = 8
-	}
-	if n > 60 {
-		n = 60
-	}
-	return strings.Repeat("-", n)
 }
 
 func emptyMessage(totalDiscovered int) string {

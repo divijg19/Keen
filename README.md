@@ -46,29 +46,29 @@ Selecting a mode never changes which repositories are shown. `--clean`, `--dirty
 
 ## Interactive mode
 
-`keen -i` presents six investigative surfaces:
+`keen -i` presents five investigative surfaces:
 
 | Surface        | Answers                                    | Shows                                                        |
 | -------------- | ------------------------------------------ | ------------------------------------------------------------ |
-| List           | Which repositories exist?                  | identity, status, branch, synchronization                     |
+| List           | Which repositories exist?                  | identity, status, branch, synchronization (supports `/` filtering) |
 | Detail         | What is this repository?                   | name, path, status, branch, upstream, ahead, behind, last commit |
-| Activity       | What happened recently in this repository? | repository, hash, subject, relative time (selected repo)    |
-| Commit History | What happened before the latest commit?    | recent commits (hash, subject, author, date)                |
+| Commit History | What happened recently in this repository? | recent commits (hash, subject, author, date)                |
 | Commit Detail  | Which commit am I looking at?              | full hash, subject, body, author, dates, parents             |
-| Changed Files  | What files did this commit change?         | change status (A/M/D/R) and path(s)                          |
+| Changed Files  | What files did this commit change?         | change status (A/M/D/R), path(s), and change magnitude (`+N −N`) |
 
 Commit History shows the latest **20 commits** of the selected repository.
 
-List is an addressable index: each row carries one status tag, branch, and synchronization — enough to select the correct repository — with the selected row marked by a `▸` pointer and a reverse-video highlight on a terminal. Detail (not the List) carries the upstream path. Activity is contextual to the selected repository and shows its latest commit (`No commits` if none). The surfaces form a strict hierarchy (`List → Detail → Activity → Commit History → Commit Detail → Changed Files`): `Enter` descends one level, `←`/`Esc` ascend one level, and Changed Files is the deepest — pressing anything past it never wraps around to List.
+List is an addressable index: each row carries one status tag, branch, and synchronization — enough to select the correct repository — with the selected row marked by a `▸` pointer and a reverse-video highlight on a terminal. Detail (not the List) carries the upstream path. The surfaces form a strict hierarchy (`List → Detail → Commit History → Commit Detail → Changed Files`): `Enter` descends one level, `←`/`Esc` ascend one level, and Changed Files is the deepest — pressing anything past it never wraps around to List. Pressing `/` in List enters lightweight repository filtering.
 
 | Key             | Action                                  |
 | --------------- | --------------------------------------- |
 | `↑`/`↓`         | Move selection                          |
-| `Enter`         | Advance to the child surface (List → Detail → Activity → Commit History → Commit Detail → Changed Files) |
-| `←`/`Esc`       | Return to the parent (Changed Files → Commit Detail → Commit History → Activity → Detail → List) |
+| `/`             | Filter repositories in List             |
+| `Enter`         | Advance to the child surface (List → Detail → Commit History → Commit Detail → Changed Files) |
+| `←`/`Esc`       | Return to the parent (Changed Files → Commit Detail → Commit History → Detail → List) |
 | `q` / `Ctrl+C`  | Quit                                    |
 
-A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 6`, etc.) identifies the active view and position; the selection highlight tracks the viewport so the visible part of the selected row stays emphasized. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.
+A view wider than the terminal is revealed through a horizontal viewport — scroll with `Shift+←`/`Shift+→`. A persistent header (`‹ LIST › 1 / 5`, etc.) identifies the active view and position; the selection highlight tracks the viewport so the visible part of the selected row stays emphasized. The list scrolls vertically so the selected repository stays visible; filtering and sorting still determine list order.
 
 When stdin is not a terminal (e.g. `keen -i < input`), `keen -i` prints a one-shot overview and exits, preserving script compatibility.
 

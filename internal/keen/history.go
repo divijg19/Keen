@@ -2,6 +2,7 @@ package keen
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -22,9 +23,12 @@ type Commit struct {
 
 // ChangedFile describes one path touched by a commit.
 type ChangedFile struct {
-	Status  string // A, M, D, R, C, etc.
-	Path    string // for renames/copies: "old -> new" or just new path
-	OldPath string // only for renames/copies
+	Status    string // A, M, D, R, C, etc.
+	Path      string // for renames/copies: new path or just path
+	OldPath   string // only for renames/copies
+	Additions int
+	Deletions int
+	IsBinary  bool
 }
 
 const commitHistoryLimit = 20
@@ -96,16 +100,64 @@ func loadChangedFiles(repoPath, hash string) ([]ChangedFile, error) {
 	if hash == "" {
 		return nil, nil
 	}
-	// --no-commit-id suppresses the hash line, -r recurses, -M detects renames,
-	// --root includes root diffs, and -z NUL-terminates status and path fields.
-	// With -z, pathnames are emitted raw (never quote-escaped), so names with
-	// spaces, quotes, tabs, or non-ASCII bytes parse verbatim. Each record is
-	// <status>\0<path>\0, or <status>\0<old>\0<new>\0 for renames/copies.
-	out, err := runGit(repoPath, "diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "-z", "--root", hash)
+	statusOut, err := runGit(repoPath, "diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "-z", "--root", hash)
 	if err != nil {
 		return nil, err
 	}
-	return parseChangedFiles(out)
+	numstatOut, err := runGit(repoPath, "diff-tree", "--no-commit-id", "--numstat", "-r", "-M", "-z", "--root", hash)
+	if err != nil {
+		return parseChangedFiles(statusOut)
+	}
+	return parseChangedFilesWithNumstat(statusOut, numstatOut)
+}
+
+func parseChangedFilesWithNumstat(statusRaw, numstatRaw string) ([]ChangedFile, error) {
+	files, err := parseChangedFiles(statusRaw)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Split(numstatRaw, "\x00")
+	type statEntry struct {
+		add, del int
+		isBin    bool
+		path     string
+	}
+	var stats []statEntry
+	i := 0
+	for i < len(fields) {
+		addStr := fields[i]
+		if addStr == "" {
+			break
+		}
+		i++
+		if i >= len(fields) {
+			break
+		}
+		delStr := fields[i]
+		i++
+		if i >= len(fields) {
+			break
+		}
+		p1 := fields[i]
+		i++
+		isBin := (addStr == "-" || delStr == "-")
+		add, _ := strconv.Atoi(addStr)
+		del, _ := strconv.Atoi(delStr)
+		stats = append(stats, statEntry{add: add, del: del, isBin: isBin, path: p1})
+	}
+
+	for idx := range files {
+		f := &files[idx]
+		for _, s := range stats {
+			if s.path == f.Path || (f.OldPath != "" && (s.path == f.Path || s.path == f.OldPath)) {
+				f.Additions = s.add
+				f.Deletions = s.del
+				f.IsBinary = s.isBin
+				break
+			}
+		}
+	}
+	return files, nil
 }
 
 // parseChangedFiles parses git diff-tree --name-status -z output, which is a

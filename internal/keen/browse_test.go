@@ -46,25 +46,25 @@ func TestRenderBrowseHeader(t *testing.T) {
 	if !strings.Contains(overview, "‹ LIST ›") {
 		t.Errorf("list header missing: %q", overview)
 	}
-	if !strings.Contains(overview, "1 / 6") {
+	if !strings.Contains(overview, "1 / 5") {
 		t.Errorf("list indicator missing: %q", overview)
 	}
 	if !strings.Contains(overview, "↑/↓ select") {
 		t.Errorf("list navigation hint missing: %q", overview)
 	}
 
-	activity := renderBrowse(browseSample(), 3, BrowseActivity, 40)
-	if !strings.Contains(activity, "‹ ACTIVITY ›") {
-		t.Errorf("activity header missing: %q", activity)
+	history := renderBrowse(browseSample(), 3, BrowseCommitHistory, 40)
+	if !strings.Contains(history, "‹ HISTORY ›") {
+		t.Errorf("history header missing: %q", history)
 	}
-	if !strings.Contains(activity, "3 / 6") {
-		t.Errorf("activity indicator missing: %q", activity)
+	if !strings.Contains(history, "3 / 5") {
+		t.Errorf("history indicator missing: %q", history)
 	}
 	detail := renderBrowse(browseSample(), 3, BrowseDetail, 40)
 	if !strings.Contains(detail, "‹ DETAIL ›") {
 		t.Errorf("detail header missing: %q", detail)
 	}
-	if !strings.Contains(detail, "2 / 6") {
+	if !strings.Contains(detail, "2 / 5") {
 		t.Errorf("detail indicator missing: %q", detail)
 	}
 	if !strings.Contains(detail, "←/Esc back") {
@@ -98,31 +98,6 @@ func TestRenderOverviewIncludesUpstream(t *testing.T) {
 	}
 	if !strings.Contains(out, "↑– ↓–") {
 		t.Errorf("expected non-numeric marker for no-upstream repo: %q", out)
-	}
-}
-
-func TestRenderActivityShowsCommitIdentity(t *testing.T) {
-	out := renderBrowse(browseSample(), 3, BrowseActivity, 200)
-
-	if !strings.Contains(out, "8f31ac2") {
-		t.Errorf("expected short hash: %q", out)
-	}
-	// The interactive Activity view renders the full subject; the horizontal
-	// viewport handles width rather than truncating.
-	if !strings.Contains(out, "tighten memory format") {
-		t.Errorf("expected full commit subject: %q", out)
-	}
-	if strings.Contains(out, "…") {
-		t.Errorf("interactive Activity must not truncate the subject: %q", out)
-	}
-	if !strings.Contains(out, "2 days ago") {
-		t.Errorf("expected relative time: %q", out)
-	}
-	if !strings.Contains(out, "wip refactor") {
-		t.Errorf("expected dirty repo commit: %q", out)
-	}
-	if !strings.Contains(out, "No commits") {
-		t.Errorf("expected 'No commits' for repository with no history: %q", out)
 	}
 }
 
@@ -204,7 +179,7 @@ func TestScrollClampsOffset(t *testing.T) {
 	state := &browserState{
 		repos:    browseSample(),
 		total:    3,
-		page:     BrowseActivity,
+		page:     BrowseDetail,
 		offset:   0,
 		viewport: 20,
 	}
@@ -242,7 +217,7 @@ func TestBrowseHeaderLineContract(t *testing.T) {
 		t.Fatalf("browseHeaderLine %d out of range for %d lines", browseHeaderLine, len(lines))
 	}
 	header := lines[browseHeaderLine]
-	if !strings.Contains(header, "‹ LIST ›") || !strings.Contains(header, "1 / 6") {
+	if !strings.Contains(header, "‹ LIST ›") || !strings.Contains(header, "1 / 5") {
 		t.Errorf("line %d is not the view-indicator header: %q", browseHeaderLine, header)
 	}
 }
@@ -252,7 +227,7 @@ func TestBrowseHeaderLineContract(t *testing.T) {
 // identity. It exercises browserState.render() (the composition that was
 // buggy), not just renderBrowse.
 func TestRenderKeepsViewIdentityVisibleAtEveryOffset(t *testing.T) {
-	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseActivity, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles} {
+	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles} {
 		t.Run(page.label(), func(t *testing.T) {
 			state := &browserState{
 				repos:          browseSample(),
@@ -320,8 +295,8 @@ func TestRunHierarchicalNavigationAndIgnoresUnknownInput(t *testing.T) {
 	}{
 		{keyDown, true},        // move selection down (list)
 		{keyEnter, true},       // List -> Detail
-		{keyEnter, true},       // Detail -> Activity
-		{keyLeft, true},        // Activity -> Detail
+		{keyEnter, true},       // Detail -> History
+		{keyLeft, true},        // History -> Detail
 		{keyEsc, true},         // Detail -> List
 		{keyScrollRight, true}, // scroll within bounds (list)
 		{keyNone, true},        // unknown keys are ignored, loop continues
@@ -636,7 +611,7 @@ func TestNavigationDetailToList(t *testing.T) {
 	}
 }
 
-func TestNavigationDetailToActivity(t *testing.T) {
+func TestNavigationDetailToHistory(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
 	s.page = BrowseDetail
 	captureOutput(func() {
@@ -647,14 +622,14 @@ func TestNavigationDetailToActivity(t *testing.T) {
 			return keyQuit, true
 		})
 	})
-	if s.page != BrowseActivity {
-		t.Errorf("detail Enter -> activity: page = %v, want Activity", s.page)
+	if s.page != BrowseCommitHistory {
+		t.Errorf("detail Enter -> history: page = %v, want CommitHistory", s.page)
 	}
 }
 
-func TestNavigationActivityToDetail(t *testing.T) {
+func TestNavigationHistoryToDetail(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
-	s.page = BrowseActivity
+	s.page = BrowseCommitHistory
 	i := 0
 	captureOutput(func() {
 		s.run(func() (keyAction, bool) {
@@ -666,12 +641,12 @@ func TestNavigationActivityToDetail(t *testing.T) {
 		})
 	})
 	if s.page != BrowseDetail {
-		t.Errorf("activity Left -> detail: page = %v, want Detail", s.page)
+		t.Errorf("history Left -> detail: page = %v, want Detail", s.page)
 	}
 }
 
 func TestNavigationQuitFromAllPages(t *testing.T) {
-	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseActivity} {
+	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles} {
 		s := newBrowserState(browseSample(), 3)
 		s.page = page
 		calls := 0
@@ -702,7 +677,7 @@ func TestNavigationEOF(t *testing.T) {
 }
 
 // TestNavigationKeepsSelectionValid drives the full hierarchy round-trip
-// (List → Detail → Activity → Detail → List) and asserts the selection index
+// (List → Detail → History → Detail → List) and asserts the selection index
 // stays a valid address into the repository set after every transition.
 func TestNavigationKeepsSelectionValid(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
@@ -715,9 +690,9 @@ func TestNavigationKeepsSelectionValid(t *testing.T) {
 			case 1:
 				return keyEnter, true // List -> Detail
 			case 2:
-				return keyEnter, true // Detail -> Activity
+				return keyEnter, true // Detail -> History
 			case 3:
-				return keyLeft, true // Activity -> Detail
+				return keyLeft, true // History -> Detail
 			case 4:
 				return keyEsc, true // Detail -> List
 			}
@@ -735,8 +710,8 @@ func TestNavigationKeepsSelectionValid(t *testing.T) {
 	}
 }
 
-// TestNavigationFullV070Hierarchy drives the complete six-surface hierarchy
-// (List → Detail → Activity → Commit History → Commit Detail → Changed Files
+// TestNavigationFullV070Hierarchy drives the complete five-surface hierarchy
+// (List → Detail → History → Commit → Files
 // and back up to List) and asserts correct page transitions at each step.
 func TestNavigationFullV070Hierarchy(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
@@ -745,14 +720,12 @@ func TestNavigationFullV070Hierarchy(t *testing.T) {
 
 	actions := []keyAction{
 		keyEnter, // List -> Detail
-		keyEnter, // Detail -> Activity
-		keyEnter, // Activity -> History
+		keyEnter, // Detail -> History
 		keyEnter, // History -> Commit
 		keyEnter, // Commit -> Files
 		keyEsc,   // Files -> Commit
 		keyEsc,   // Commit -> History
-		keyEsc,   // History -> Activity
-		keyEsc,   // Activity -> Detail
+		keyEsc,   // History -> Detail
 		keyEsc,   // Detail -> List
 		keyQuit,  // exit
 	}
@@ -822,31 +795,6 @@ func TestRenderDetail(t *testing.T) {
 	out = renderDetail(repo)
 	if !strings.Contains(out, "work/api") {
 		t.Errorf("detail collision identity: %q", out)
-	}
-}
-
-// --- Activity rendering tests (contextual) ---
-
-func TestRenderActivitySelected(t *testing.T) {
-	repo := Repository{Name: "myrepo", LastCommitHash: "abc123", LastCommitSubject: "feat", LastCommitTime: "now"}
-	out := renderActivityForSelected(repo, 80)
-	if !strings.Contains(out, "myrepo") || !strings.Contains(out, "abc123") {
-		t.Errorf("activity selected: %q", out)
-	}
-	repo.LastCommitHash = ""
-	out = renderActivityForSelected(repo, 80)
-	if !strings.Contains(out, "No commits") {
-		t.Errorf("activity no commits: %q", out)
-	}
-	long := Repository{Name: "r", LastCommitHash: "abc", LastCommitSubject: strings.Repeat("x", 100), LastCommitTime: "now"}
-	out = renderActivityForSelected(long, 80)
-	if !strings.Contains(out, "x") {
-		t.Errorf("activity long subject: %q", out)
-	}
-	coll := Repository{Name: "work/api", LastCommitHash: "abc", LastCommitSubject: "s", LastCommitTime: "now"}
-	out = renderActivityForSelected(coll, 80)
-	if !strings.Contains(out, "work/api") {
-		t.Errorf("activity collision identity: %q", out)
 	}
 }
 
@@ -1061,4 +1009,20 @@ func containsControlSequence(s string) bool {
 		}
 	}
 	return false
+}
+
+func TestBrowserFiltering(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.filtering = true
+	state.filterQuery = "peo"
+	state.applyFilter()
+	if len(state.repos) != 1 || state.repos[0].Name != "Peony" {
+		t.Errorf("expected 1 repo matching 'peo', got %d", len(state.repos))
+	}
+	state.filtering = false
+	state.filterQuery = ""
+	state.applyFilter()
+	if len(state.repos) != 3 {
+		t.Errorf("expected 3 repos after clearing filter, got %d", len(state.repos))
+	}
 }

@@ -86,7 +86,7 @@ func renderRich(repositories []Repository, totalDiscovered, width int) string {
 	if len(repositories) == 0 {
 		return "\n" + emptyMessage(totalDiscovered) + "\n"
 	}
-	cols := richLayout(width - len([]rune(reportIndent)))
+	cols := richLayout(width - stringCellWidth(reportIndent))
 	if cols == nil {
 		return renderGrouped(repositories, width)
 	}
@@ -260,11 +260,7 @@ func richValues(r Repository) []string {
 
 // fit truncates text to the column width and pads it to exactly that width.
 func (c richColumn) fit(text string) string {
-	text = truncate(text, c.width)
-	if c.right {
-		return fmt.Sprintf("%*s", c.width, text)
-	}
-	return fmt.Sprintf("%-*s", c.width, text)
+	return padCells(text, c.width, c.right)
 }
 
 func richTable(repositories []Repository, cols []richColumn) string {
@@ -352,7 +348,7 @@ func commitLabel(repo Repository, budget int) string {
 		return ""
 	}
 	short := shortHash(repo.LastCommitHash)
-	avail := budget - len(short) - 1
+	avail := budget - stringCellWidth(short) - 1
 	if maxSubject := 40; avail > maxSubject {
 		avail = maxSubject
 	}
@@ -360,8 +356,8 @@ func commitLabel(repo Repository, budget int) string {
 		return short
 	}
 	subject := repo.LastCommitSubject
-	if len([]rune(subject)) > avail {
-		subject = string([]rune(subject)[:avail]) + "…"
+	if stringCellWidth(subject) > avail {
+		subject = truncateCells(subject, avail) + "…"
 	}
 	return short + " " + subject
 }
@@ -400,7 +396,7 @@ func repositoryRow(repository Repository, width int, showTag bool) string {
 		if width <= 0 {
 			return 1 << 30
 		}
-		return width - len([]rune(reportIndent)) - len([]rune(line.String()))
+		return width - stringCellWidth(reportIndent) - stringCellWidth(line.String())
 	}
 	if repository.LastCommitHash != "" {
 		if rem := remaining(); rem >= 13 { // " | " + short hash + space + one subject rune
@@ -408,7 +404,7 @@ func repositoryRow(repository Repository, width int, showTag bool) string {
 		}
 	}
 	if repository.LastCommitTime != "" {
-		if rem := remaining(); rem >= 3+len([]rune(repository.LastCommitTime)) {
+		if rem := remaining(); rem >= 3+stringCellWidth(repository.LastCommitTime) {
 			line.WriteString(" | " + repository.LastCommitTime)
 		}
 	}
