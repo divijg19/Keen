@@ -43,7 +43,7 @@ const browsePageCount = 5
 func (p BrowsePage) label() string {
 	switch p {
 	case BrowseList:
-		return "LIST"
+		return "REPOSITORIES"
 	case BrowseDetail:
 		return "DETAIL"
 	case BrowseCommitHistory:
@@ -404,10 +404,10 @@ func (b *browserState) render() {
 		full = b.renderListContent()
 	case BrowseDetail:
 		if repo := b.selectedRepo(); repo != nil {
-			full = renderDetail(*repo)
-			// Wrap detail with the view header for consistency.
 			header := b.renderHeader()
-			full = header + full
+			content := renderDetail(*repo)
+			footer := renderFooter(b.page)
+			full = header + content + "\n" + footer
 		} else {
 			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 		}
@@ -416,9 +416,10 @@ func (b *browserState) render() {
 	case BrowseCommitDetail:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				full = renderCommitDetail(*repo, *c)
 				header := b.renderHeader()
-				full = header + full
+				content := renderCommitDetail(*repo, *c)
+				footer := renderFooter(b.page)
+				full = header + content + "\n" + footer
 			} else {
 				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 			}
@@ -428,9 +429,10 @@ func (b *browserState) render() {
 	case BrowseChangedFiles:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				full = renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr)
 				header := b.renderHeader()
-				full = header + full
+				content := renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr)
+				footer := renderFooter(b.page)
+				full = header + content + "\n" + footer
 			} else {
 				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 			}
@@ -495,14 +497,18 @@ func (b *browserState) selectedRowLine() int {
 }
 
 func (b *browserState) renderHeader() string {
-	return renderBannerAndHeader(b.page, b.viewport)
+	repoName := ""
+	if r := b.selectedRepo(); r != nil {
+		repoName = r.Name
+	}
+	return renderBannerAndHeader(b.page, repoName, b.viewport)
 }
 
 // renderListContent renders the List surface, prefixed by the shared
 // active-view header.
 func (b *browserState) renderListContent() string {
 	var sb strings.Builder
-	sb.WriteString(renderBannerAndHeader(b.page, b.viewport))
+	sb.WriteString(b.renderHeader())
 
 	if b.filterQuery != "" {
 		sb.WriteString(reportIndent + "filter: " + b.filterQuery + "\n\n")
@@ -510,7 +516,7 @@ func (b *browserState) renderListContent() string {
 
 	if len(b.repos) == 0 {
 		sb.WriteString(reportIndent + emptyMessage(b.total) + "\n\n")
-		sb.WriteString(reportIndent + "←/→ views    Shift+←/→ scroll    q quit\n")
+		sb.WriteString(renderFooter(b.page))
 		return sb.String()
 	}
 
@@ -543,29 +549,29 @@ func (b *browserState) renderListContent() string {
 		sb.WriteString(row + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(reportIndent + "↑/↓ select    Enter inspect    q quit\n")
+	sb.WriteString(renderFooter(b.page))
 	return sb.String()
 }
 
 func (b *browserState) renderCommitHistoryContent() string {
 	var sb strings.Builder
-	sb.WriteString(renderBannerAndHeader(b.page, b.viewport))
+	sb.WriteString(b.renderHeader())
 
 	repo := b.selectedRepo()
 	if repo == nil {
 		sb.WriteString(reportIndent + "No repository selected.\n\n")
-		sb.WriteString(reportIndent + "←/Esc back    q quit\n")
+		sb.WriteString(renderFooter(b.page))
 		return sb.String()
 	}
 	sb.WriteString(reportIndent + "Repository: " + repo.Name + "\n\n")
 	if b.historyErr != "" {
 		sb.WriteString(reportIndent + "Failed to load history: " + b.historyErr + "\n\n")
-		sb.WriteString(reportIndent + "←/Esc back    q quit\n")
+		sb.WriteString(renderFooter(b.page))
 		return sb.String()
 	}
 	if len(b.history) == 0 {
 		sb.WriteString(reportIndent + "No commits\n\n")
-		sb.WriteString(reportIndent + "←/Esc back    q quit\n")
+		sb.WriteString(renderFooter(b.page))
 		return sb.String()
 	}
 	b.ensureCommitVisible()
@@ -586,7 +592,7 @@ func (b *browserState) renderCommitHistoryContent() string {
 		sb.WriteString(row + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(reportIndent + "↑/↓ select    Enter detail    ←/Esc back    q quit\n")
+	sb.WriteString(renderFooter(b.page))
 	return sb.String()
 }
 
@@ -824,9 +830,14 @@ func sliceViewport(s string, offset, width int) string {
 // is the single canonical source for this chrome so every page renders an
 // identical header. No application banner is drawn; the header alone orients
 // the user on every repaint.
-func renderBannerAndHeader(page BrowsePage, width int) string {
+func renderBannerAndHeader(page BrowsePage, repoName string, width int) string {
 	var sb strings.Builder
-	title := "‹ " + page.label() + " ›"
+	var title string
+	if repoName == "" || page == BrowseList {
+		title = "KEEN › " + page.label()
+	} else {
+		title = fmt.Sprintf("KEEN › %s › %s", repoName, page.label())
+	}
 	indicator := fmt.Sprintf("%d / %d", int(page)+1, browsePageCount)
 	pad := width - stringCellWidth(title) - stringCellWidth(indicator)
 	if pad < 0 {
@@ -839,6 +850,23 @@ func renderBannerAndHeader(page BrowsePage, width int) string {
 	return sb.String()
 }
 
+func renderFooter(page BrowsePage) string {
+	var hint string
+	switch page {
+	case BrowseList:
+		hint = "↑/↓ select    / filter    Enter inspect    q quit"
+	case BrowseDetail:
+		hint = "Enter history    ←/Esc back    q quit"
+	case BrowseCommitHistory:
+		hint = "↑/↓ select    Enter detail    ←/Esc back    q quit"
+	case BrowseCommitDetail:
+		hint = "Enter files    ←/Esc back    q quit"
+	case BrowseChangedFiles:
+		hint = "←/Esc back    q quit"
+	}
+	return reportIndent + hint + "\n"
+}
+
 // renderBrowse assembles the full (untruncated) screen for a page. Width
 // controls only the header padding and the decorative rules; body lines are
 // rendered at full content width and revealed through the horizontal viewport
@@ -846,7 +874,11 @@ func renderBannerAndHeader(page BrowsePage, width int) string {
 // terminal state and directly assertable in tests.
 func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, width int) string {
 	var sb strings.Builder
-	sb.WriteString(renderBannerAndHeader(page, width))
+	repoName := ""
+	if len(repos) > 0 && page != BrowseList {
+		repoName = repos[0].Name
+	}
+	sb.WriteString(renderBannerAndHeader(page, repoName, width))
 
 	switch page {
 	case BrowseList:
@@ -868,20 +900,7 @@ func renderBrowse(repos []Repository, totalDiscovered int, page BrowsePage, widt
 		sb.WriteString(renderOverview(repos, totalDiscovered, width))
 	}
 
-	var hint string
-	switch page {
-	case BrowseList:
-		hint = "↑/↓ select    Enter inspect    q quit"
-	case BrowseDetail:
-		hint = "Enter history    ←/Esc back    q quit"
-	case BrowseCommitHistory:
-		hint = "↑/↓ select    Enter detail    ←/Esc back    q quit"
-	case BrowseCommitDetail:
-		hint = "Enter files    ←/Esc back    q quit"
-	case BrowseChangedFiles:
-		hint = "←/Esc back    q quit"
-	}
-	sb.WriteString(reportIndent + hint + "\n")
+	sb.WriteString(renderFooter(page))
 	return sb.String()
 }
 

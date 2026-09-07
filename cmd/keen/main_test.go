@@ -159,7 +159,7 @@ func TestInteractiveNonTTYNoEscape(t *testing.T) {
 	if hasControlSequence(out.String()) {
 		t.Fatalf("terminal escape/control sequence leaked into non-TTY output: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "‹ LIST ›") {
+	if !strings.Contains(out.String(), "KEEN › REPOSITORIES") {
 		t.Errorf("one-shot output missing List header: %q", out.String())
 	}
 }
