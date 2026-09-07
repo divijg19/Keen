@@ -43,7 +43,7 @@ func browseSample() []Repository {
 
 func TestRenderBrowseHeader(t *testing.T) {
 	overview := renderBrowse(browseSample(), 3, BrowseList, 40)
-	if !strings.Contains(overview, "‹ LIST ›") {
+	if !strings.Contains(overview, "KEEN › REPOSITORIES") {
 		t.Errorf("list header missing: %q", overview)
 	}
 	if !strings.Contains(overview, "1 / 5") {
@@ -54,14 +54,14 @@ func TestRenderBrowseHeader(t *testing.T) {
 	}
 
 	history := renderBrowse(browseSample(), 3, BrowseCommitHistory, 40)
-	if !strings.Contains(history, "‹ HISTORY ›") {
+	if !strings.Contains(history, "KEEN › Peony › HISTORY") {
 		t.Errorf("history header missing: %q", history)
 	}
 	if !strings.Contains(history, "3 / 5") {
 		t.Errorf("history indicator missing: %q", history)
 	}
 	detail := renderBrowse(browseSample(), 3, BrowseDetail, 40)
-	if !strings.Contains(detail, "‹ DETAIL ›") {
+	if !strings.Contains(detail, "KEEN › Peony › DETAIL") {
 		t.Errorf("detail header missing: %q", detail)
 	}
 	if !strings.Contains(detail, "2 / 5") {
@@ -217,7 +217,7 @@ func TestBrowseHeaderLineContract(t *testing.T) {
 		t.Fatalf("browseHeaderLine %d out of range for %d lines", browseHeaderLine, len(lines))
 	}
 	header := lines[browseHeaderLine]
-	if !strings.Contains(header, "‹ LIST ›") || !strings.Contains(header, "1 / 5") {
+	if !strings.Contains(header, "KEEN › REPOSITORIES") || !strings.Contains(header, "1 / 5") {
 		t.Errorf("line %d is not the view-indicator header: %q", browseHeaderLine, header)
 	}
 }
@@ -248,7 +248,10 @@ func TestRenderKeepsViewIdentityVisibleAtEveryOffset(t *testing.T) {
 				offsets = append(offsets, maxOffset/2, maxOffset)
 			}
 
-			title := "‹ " + page.label() + " ›"
+			title := "KEEN › REPOSITORIES"
+			if page != BrowseList {
+				title = fmt.Sprintf("KEEN › %s › %s", browseSample()[0].Name, page.label())
+			}
 			counter := fmt.Sprintf("%d / %d", int(page)+1, browsePageCount)
 			for _, offset := range offsets {
 				state.offset = offset
@@ -991,7 +994,7 @@ func TestBrowseNonTTY(t *testing.T) {
 		Browse(repos, 3)
 	})
 
-	if !strings.Contains(out, "‹ LIST ›") {
+	if !strings.Contains(out, "KEEN › REPOSITORIES") {
 		t.Errorf("non-TTY browse must output static list view, got:\n%q", out)
 	}
 	if containsControlSequence(out) {
@@ -1024,5 +1027,14 @@ func TestBrowserFiltering(t *testing.T) {
 	state.applyFilter()
 	if len(state.repos) != 3 {
 		t.Errorf("expected 3 repos after clearing filter, got %d", len(state.repos))
+	}
+}
+
+func TestRenderBrowseFooterPresence(t *testing.T) {
+	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles} {
+		out := renderBrowse(browseSample(), 3, page, 80)
+		if !strings.Contains(out, "quit") {
+			t.Errorf("page %v missing footer/keymap: %q", page, out)
+		}
 	}
 }
