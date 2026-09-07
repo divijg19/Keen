@@ -151,7 +151,7 @@ func richMatrixFixture() []Repository {
 func maxLineLength(out string) int {
 	maxw := 0
 	for _, line := range strings.Split(out, "\n") {
-		if w := len([]rune(line)); w > maxw {
+		if w := lineWidth(line); w > maxw {
 			maxw = w
 		}
 	}
@@ -165,6 +165,10 @@ func hasHeader(cols []richColumn, name string) bool {
 		}
 	}
 	return false
+}
+
+func lineWidth(s string) int {
+	return stringCellWidth(s)
 }
 
 // TestRenderRichWidthMatrix pins the tiered adaptation contract across
@@ -192,7 +196,7 @@ func TestRenderRichWidthMatrix(t *testing.T) {
 		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
 			out := renderRich(repos, len(repos), width)
 
-			cols := richLayout(width - len([]rune(reportIndent)))
+			cols := richLayout(width - stringCellWidth(reportIndent))
 			if cols == nil {
 				// Canonical fallback: byte-identical to the grouped
 				// rendering, no table headers. Canonical output is unconstrained
@@ -216,8 +220,8 @@ func TestRenderRichWidthMatrix(t *testing.T) {
 			for _, line := range strings.Split(out, "\n") {
 				if len(line) > 4 && strings.Trim(line, " -") == "" {
 					ruleFound = true
-					if len([]rune(line)) != width {
-						t.Errorf("rule line %d != terminal width %d", len([]rune(line)), width)
+					if lineWidth(line) != width {
+						t.Errorf("rule line %d != terminal width %d", lineWidth(line), width)
 					}
 				}
 			}
