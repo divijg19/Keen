@@ -92,10 +92,13 @@ func restoreRaw(fd int) {
 
 // readKey blocks for one input event. The raw sequence accompanies the
 // normalized action so callers (notably filter editing) can consume printable
-// characters. The boolean reports whether the input stream is still alive;
-// when it is false (EOF, closed or hung-up tty, I/O error) the caller must
-// terminate the interactive session so terminal restoration runs instead of
-// spinning on a dead stream.
+// characters. Multi-byte UTF-8 input arrives as one event: after a sequence
+// leader the remaining continuation bytes are read (blocking, as the terminal
+// delivers a keystroke atomically) so CJK, emoji, and accented query text is
+// never fragmented into invalid partials. The boolean reports whether the
+// input stream is still alive; when it is false (EOF, closed or hung-up tty,
+// I/O error) the caller must terminate the interactive session so terminal
+// restoration runs instead of spinning on a dead stream.
 func readKey() (keyAction, string, bool) {
 	buf := make([]byte, 1)
 	n, err := os.Stdin.Read(buf)
@@ -106,8 +109,19 @@ func readKey() (keyAction, string, bool) {
 		raw := "\x1b" + readTrailing()
 		return interpretSequence(raw), raw, true
 	}
-	raw := string(buf[0])
-	return interpretSequence(raw), raw, true
+	raw := []byte{buf[0]}
+	// Hoist the sequence length: buf is reused for continuation reads, so
+	// re-evaluating the leader mid-loop would see continuation bytes.
+	need := utf8SequenceLen(buf[0])
+	for len(raw) < need {
+		m, rerr := os.Stdin.Read(buf)
+		if rerr != nil || m == 0 {
+			break
+		}
+		raw = append(raw, buf[0])
+	}
+	s := string(raw)
+	return interpretSequence(s), s, true
 }
 
 // readTrailing consumes up to eight more bytes after an ESC without blocking,

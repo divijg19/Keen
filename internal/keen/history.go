@@ -42,8 +42,8 @@ const commitRecordSep = "\x1e"
 
 // loadCommitHistory returns the recent commit history for the repository at
 // repoPath, bounded to commitHistoryLimit entries. It is loaded on demand
-// when the user descends from Activity and never during the global Enrich
-// pipeline.
+// when the user descends from Detail into History and never during the
+// global Enrich pipeline.
 func loadCommitHistory(repoPath string) ([]Commit, error) {
 	// %H hash, %s subject, %b body, %an author, %ai author date (ISO-like),
 	// %cn committer, %ci committer date, %P parents, %x1f field sep, %x1e record sep.

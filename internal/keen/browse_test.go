@@ -3,6 +3,7 @@ package keen
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -46,8 +47,8 @@ func TestRenderBrowseHeader(t *testing.T) {
 	if !strings.Contains(overview, "KEEN › REPOSITORIES") {
 		t.Errorf("list header missing: %q", overview)
 	}
-	if strings.Contains(overview, "/ 5") {
-		t.Errorf("list header must not carry a global step counter: %q", overview)
+	if !strings.Contains(overview, "1 / 5") {
+		t.Errorf("list header must carry its position hint: %q", overview)
 	}
 	if !strings.Contains(overview, "↑/↓ select") {
 		t.Errorf("list navigation hint missing: %q", overview)
@@ -57,15 +58,15 @@ func TestRenderBrowseHeader(t *testing.T) {
 	if !strings.Contains(history, "KEEN › Peony › HISTORY") {
 		t.Errorf("history header missing: %q", history)
 	}
-	if strings.Contains(history, "/ 5") {
-		t.Errorf("history header must not carry a global step counter: %q", history)
+	if !strings.Contains(history, "3 / 5") {
+		t.Errorf("history header must carry its position hint: %q", history)
 	}
 	detail := renderBrowse(browseSample(), 3, BrowseDetail, 40)
 	if !strings.Contains(detail, "KEEN › Peony › DETAIL") {
 		t.Errorf("detail header missing: %q", detail)
 	}
-	if strings.Contains(detail, "/ 5") {
-		t.Errorf("detail header must not carry a global step counter: %q", detail)
+	if !strings.Contains(detail, "2 / 5") {
+		t.Errorf("detail header must carry its position hint: %q", detail)
 	}
 	if !strings.Contains(detail, "←/Esc back") {
 		t.Errorf("detail navigation hint missing: %q", detail)
@@ -236,6 +237,172 @@ func TestInteractiveFooterStableAcrossWidths(t *testing.T) {
 	}
 }
 
+// seedDeepState returns a browser state with populated hierarchy descendants
+// (commits, selection, files) so height/width matrices exercise the real
+// bounded render paths instead of the selection-missing fallbacks.
+func seedDeepState(repos []Repository, page BrowsePage) *browserState {
+	state := newBrowserState(repos, len(repos))
+	state.page = page
+	state.history = manyTestCommits(30)
+	state.selectedCommit = 0
+	files := make([]ChangedFile, 30)
+	for i := range files {
+		files[i] = ChangedFile{Status: "M", Path: fmt.Sprintf("src/pkg/file%02d.go", i)}
+	}
+	state.changedFiles = files
+	return state
+}
+
+// TestInteractiveHeightMatrix pins tiny-terminal behavior across every page:
+// at any height the header and footer survive in the output, and once the
+// height covers the fixed chrome (History needs seven rows minimum) the
+// whole render fits without scrolling chrome away.
+func TestInteractiveHeightMatrix(t *testing.T) {
+	t.Setenv("COLUMNS", "80")
+	pages := []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles}
+	for _, h := range []int{5, 6, 8, 10, 12, 16, 24, 40} {
+		t.Setenv("LINES", strconv.Itoa(h))
+		for _, page := range pages {
+			state := seedDeepState(manyTestRepos(30), page)
+			out := captureOutput(state.render)
+			lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+			if !strings.Contains(lines[0], "KEEN ›") {
+				t.Errorf("height %d page %v lost its header:\n%q", h, page, out)
+			}
+			if last := lines[len(lines)-1]; !strings.Contains(last, "quit") {
+				t.Errorf("height %d page %v lost its footer, last line %q:\n%q", h, page, last, out)
+			}
+			if h >= 8 && len(lines) > h {
+				t.Errorf("height %d page %v rendered %d lines; chrome must fit:\n%q", h, page, len(lines), out)
+			}
+		}
+	}
+}
+
+// TestInteractiveWidthMatrix pins narrow-terminal behavior across every page
+// and the documented width tiers: the breadcrumb header survives
+// cell-truncated at widths down to 20, and every page keeps its footer.
+func TestInteractiveWidthMatrix(t *testing.T) {
+	t.Setenv("LINES", "24")
+	pages := []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles}
+	for _, width := range []int{20, 24, 30, 40, 49, 50, 60, 61, 67, 68, 80, 94, 95, 120} {
+		t.Setenv("COLUMNS", strconv.Itoa(width))
+		for _, page := range pages {
+			state := seedDeepState(manyTestRepos(10), page)
+			out := captureOutput(state.render)
+			if !strings.Contains(out, "KEEN") {
+				t.Errorf("width %d page %v lost its header:\n%q", width, page, out)
+			}
+			if last := lastOutputLine(out); !strings.Contains(last, "quit") {
+				t.Errorf("width %d page %v lost its footer, last line %q:\n%q", width, page, last, out)
+			}
+		}
+	}
+}
+
+// TestCellWidthContract pins the practical Unicode guarantee: ordinary ASCII
+// and Latin measure one cell, common wide characters two, and zero-width,
+// combining, and control characters zero — without any external dependency.
+// It also pins that truncation never splits a wide character.
+func TestCellWidthContract(t *testing.T) {
+	for _, r := range []rune{'a', 'Z', '0', 'é', 'ñ', '→', '—', '↑', '↓'} {
+		if got := runeCellWidth(r); got != 1 {
+			t.Errorf("runeCellWidth(%q) = %d, want 1", r, got)
+		}
+	}
+	for _, r := range []rune{'日', '本', '한', '😀'} {
+		if got := runeCellWidth(r); got != 2 {
+			t.Errorf("runeCellWidth(%q) = %d, want 2", r, got)
+		}
+	}
+	for _, r := range []rune{'\u0301', '\u200b', '\u200d', '\x00', '\n', '\x1b'} {
+		if got := runeCellWidth(r); got != 0 {
+			t.Errorf("runeCellWidth(%q) = %d, want 0", r, got)
+		}
+	}
+	if got := stringCellWidth("a日b😀"); got != 6 {
+		t.Errorf("stringCellWidth mixed = %d, want 6 (1+2+1+2)", got)
+	}
+	// "a日b" at 2 cells: 日 straddles the ellipsis budget, so only "a…" fits.
+	if got := truncateCells("a日b", 2); got != "a…" {
+		t.Errorf("truncateCells straddle = %q, want %q", got, "a…")
+	}
+	if got := truncateCells("日本語", 5); got != "日本…" {
+		t.Errorf("truncateCells wide = %q, want %q", got, "日本…")
+	}
+}
+
+// TestListDensityAudit pins the List as an orientation index across the
+// states users actually encounter: collisions stay qualified and readable,
+// detached HEAD is explicit, sync facts stay numeric, and no-upstream stays
+// non-numeric — with the status sections carrying the clean/dirty signal.
+func TestListDensityAudit(t *testing.T) {
+	repos := ResolveDisplayIdentities([]Repository{
+		{Name: "api", Path: "/work/api", Branch: "main", Upstream: "origin/main", Ahead: 2, Behind: 1, Dirty: true},
+		{Name: "api", Path: "/personal/api", Branch: "feature/very-long-branch-name-for-density", Dirty: false},
+		{Name: "empty", Path: "/work/empty", Branch: "", Dirty: false},
+		{Name: "solo", Path: "/work/solo", Branch: "dev", Dirty: false},
+	})
+	state := newBrowserState(repos, 4)
+	out := captureOutput(state.render)
+	for _, want := range []string{
+		"work/api", "personal/api", // collision qualification survives
+		"detached", // detached HEAD is explicit, never fabricated
+		"↑2 ↓1",    // numeric divergence where upstream exists
+		"↑– ↓–",    // non-numeric marker where it does not
+		"[dirty]",  // per-row status tag is the List's single signal
+		"[clean]",  // (section headings belong to the one-shot overview)
+		"quit",     // footer intact on a mixed boring set
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("density audit missing %q:\n%q", want, out)
+		}
+	}
+}
+
+// TestZeroResultFilterLoop pins the full zero-match interaction: filtering to
+// nothing keeps chrome and a coherent empty selection, Enter is a harmless
+// no-op, and Esc recovers the full set with a valid selection.
+func TestZeroResultFilterLoop(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	script := []struct {
+		action keyAction
+		raw    string
+	}{
+		{keyFilter, "/"},
+		{keyNone, "z"},
+		{keyNone, "z"},
+		{keyNone, "z"},   // "zzz" matches nothing
+		{keyEnter, "\r"}, // accept the empty result
+		{keyEnter, "\r"}, // Enter on empty list: no-op, stays List
+		{keyEsc, "\x1b"}, // Esc on List (not editing): ignored
+		{keyFilter, "/"}, // re-enter editing to clear via Esc
+		{keyEsc, "\x1b"}, // Esc clears the query, restores the set
+		{keyQuit, "q"},
+	}
+	i := 0
+	captureOutput(func() {
+		state.run(func() (keyAction, string, bool) {
+			if i >= len(script) {
+				t.Error("run continued past the quit event")
+				return keyNone, "", false
+			}
+			s := script[i]
+			i++
+			return s.action, s.raw, true
+		})
+	})
+	if state.page != BrowseList {
+		t.Errorf("page = %v, want List throughout the zero-match loop", state.page)
+	}
+	if len(state.repos) != 3 || state.selected != 0 {
+		t.Errorf("after Esc recovery: repos = %d, selected = %d; want 3, 0", len(state.repos), state.selected)
+	}
+	if state.filterQuery != "" {
+		t.Errorf("filterQuery = %q, want empty after Esc recovery", state.filterQuery)
+	}
+}
+
 func TestScrollClampsOffset(t *testing.T) {
 	state := &browserState{
 		repos:    browseSample(),
@@ -281,8 +448,72 @@ func TestBrowseHeaderLineContract(t *testing.T) {
 	if !strings.Contains(header, "KEEN › REPOSITORIES") {
 		t.Errorf("line %d is not the view-indicator header: %q", browseHeaderLine, header)
 	}
-	if strings.Contains(header, "/ 5") {
-		t.Errorf("line %d must not carry a global step counter: %q", browseHeaderLine, header)
+	if !strings.Contains(header, "1 / 5") {
+		t.Errorf("line %d must carry the position hint: %q", browseHeaderLine, header)
+	}
+}
+
+// TestHeaderIndicatorRightAligned pins the restored position hint geometry:
+// the breadcrumb stays left, the "n / 5" indicator pads flush right, and the
+// full header line spans exactly the terminal width when there is room.
+func TestHeaderIndicatorRightAligned(t *testing.T) {
+	lines := strings.Split(renderBrowse(browseSample(), 3, BrowseList, 60), "\n")
+	header := lines[browseHeaderLine]
+	if !strings.HasSuffix(header, "1 / 5") {
+		t.Errorf("header must end with the position hint: %q", header)
+	}
+	if !strings.HasPrefix(header, "KEEN › REPOSITORIES") {
+		t.Errorf("breadcrumb must stay left: %q", header)
+	}
+	if got := stringCellWidth(header); got != 60 {
+		t.Errorf("header line = %d cells, want 60 (padded flush right)", got)
+	}
+}
+
+// TestHeaderIndicatorSurvivesLongTitle pins that an over-wide title yields
+// to the indicator: the title truncates cell-aware, the indicator stays
+// intact, and the line never exceeds the terminal width.
+func TestHeaderIndicatorSurvivesLongTitle(t *testing.T) {
+	long := Repository{Name: strings.Repeat("a", 60), Path: "/x/" + strings.Repeat("a", 60)}
+	out := renderBrowse([]Repository{long}, 1, BrowseDetail, 40)
+	first := strings.Split(out, "\n")[0]
+	if stringCellWidth(first) > 40 {
+		t.Errorf("header line %d cells exceeds width 40: %q", stringCellWidth(first), first)
+	}
+	if !strings.HasSuffix(first, "2 / 5") {
+		t.Errorf("truncated header must keep its indicator: %q", first)
+	}
+	if !strings.Contains(first, "…") {
+		t.Errorf("truncated header must carry an ellipsis: %q", first)
+	}
+}
+
+// TestFilterEditingFooter pins the searching chrome: while filter editing is
+// active the List footer swaps to the editing keymap — describing typing,
+// Backspace, accept, clear, and the Ctrl+C quit path — and never the idle
+// List footer whose bindings do not apply mid-query.
+func TestFilterEditingFooter(t *testing.T) {
+	idle := newBrowserState(browseSample(), 3)
+	if got := idle.listFooter(); !strings.Contains(got, "Enter detail") {
+		t.Errorf("idle list footer = %q, want the List keymap", got)
+	}
+	editing := newBrowserState(browseSample(), 3)
+	editing.filtering = true
+	editing.filterQuery = "pe"
+	got := editing.listFooter()
+	wants := []string{"type to filter", "Enter accept", "Backspace delete", "Esc clear", "Ctrl+C quit"}
+	for _, want := range wants {
+		if !strings.Contains(got, want) {
+			t.Errorf("editing footer %q missing %q", got, want)
+		}
+	}
+	assertFooterOrder(t, "editing", got, wants)
+	if strings.Contains(got, "Enter detail") {
+		t.Errorf("editing footer must not advertise idle actions: %q", got)
+	}
+	out := captureOutput(editing.render)
+	if last := lastOutputLine(out); !strings.Contains(last, "Ctrl+C quit") {
+		t.Errorf("filtering render must end with the editing footer, last line %q:\n%q", last, out)
 	}
 }
 
@@ -389,7 +620,7 @@ func TestRunHierarchicalNavigationAndIgnoresUnknownInput(t *testing.T) {
 
 // TestRunEnterDoesNotCycleFromChangedFiles pins that advancing with Enter from the
 // deepest surface (Changed Files) is a no-op rather than wrapping around to List.
-// Navigation is a strict hierarchy (List → Detail → Activity → Commit History → Commit Detail → Changed Files), never a carousel.
+// Navigation is a strict hierarchy (List → Detail → History → Commit → Files), never a carousel.
 func TestRunEnterDoesNotCycleFromChangedFiles(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
 	state.page = BrowseChangedFiles
@@ -740,6 +971,219 @@ func TestNavigationEOF(t *testing.T) {
 	})
 	if calls != 1 {
 		t.Errorf("EOF: calls = %d, want 1", calls)
+	}
+}
+
+// TestApplyFilterResolvesIdentitiesForVisibleSubset pins the pipeline order
+// (Filter → ResolveDisplayIdentities) inside interactive filtering: when the
+// query removes one member of a collision group, the survivor sheds its
+// parent qualification, and clearing restores the full-set identities.
+func TestApplyFilterResolvesIdentitiesForVisibleSubset(t *testing.T) {
+	pair := []Repository{
+		{Name: "api", Path: "/work/api", Branch: "main"},
+		{Name: "api", Path: "/personal/api", Branch: "main"},
+	}
+	state := newBrowserState(ResolveDisplayIdentities(pair), 2)
+	if state.repos[0].Name != "work/api" || state.repos[1].Name != "personal/api" {
+		t.Fatalf("full-set identities = %q, %q; want qualified pair",
+			state.repos[0].Name, state.repos[1].Name)
+	}
+	state.filterQuery = "work"
+	state.applyFilter()
+	if len(state.repos) != 1 {
+		t.Fatalf("filtered repos = %d, want 1", len(state.repos))
+	}
+	if state.repos[0].Name != "api" {
+		t.Errorf("survivor identity = %q, want %q (qualification must shed)", state.repos[0].Name, "api")
+	}
+	if state.repos[0].Path != "/work/api" {
+		t.Errorf("survivor path = %q, want the matched repository", state.repos[0].Path)
+	}
+	state.filterQuery = ""
+	state.applyFilter()
+	if len(state.repos) != 2 || state.repos[0].Name != "work/api" {
+		t.Errorf("clearing must restore full-set identities, got %v", state.repos)
+	}
+}
+
+// driveKeys runs the event loop over a fixed script inside captured output.
+func driveKeys(t *testing.T, state *browserState, script []struct {
+	action keyAction
+	raw    string
+}) {
+	t.Helper()
+	i := 0
+	captureOutput(func() {
+		state.run(func() (keyAction, string, bool) {
+			if i >= len(script) {
+				t.Error("run consumed more events than scripted")
+				return keyNone, "", false
+			}
+			s := script[i]
+			i++
+			return s.action, s.raw, true
+		})
+	})
+	if i != len(script) {
+		t.Errorf("consumed %d events, want %d", i, len(script))
+	}
+}
+
+func keyScript(events ...keyAction) []struct {
+	action keyAction
+	raw    string
+} {
+	raws := map[keyAction]string{
+		keyEnter: "\r", keyEsc: "\x1b", keyLeft: "\x1b[D",
+		keyUp: "\x1b[A", keyDown: "\x1b[B", keyQuit: "q",
+	}
+	script := make([]struct {
+		action keyAction
+		raw    string
+	}, len(events))
+	for i, e := range events {
+		script[i] = struct {
+			action keyAction
+			raw    string
+		}{e, raws[e]}
+	}
+	return script
+}
+
+// TestTransitionListToDetailKeepsRepoAndResetsOffsets pins that descending
+// preserves the selected repository while resetting both viewports.
+func TestTransitionListToDetailKeepsRepoAndResetsOffsets(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.selected = 1
+	state.offset = 9
+	state.detailOffset = 7
+	driveKeys(t, state, keyScript(keyEnter, keyQuit))
+	if state.page != BrowseDetail {
+		t.Fatalf("page = %v, want Detail", state.page)
+	}
+	if got := state.selectedRepo(); got == nil || got.Name != "Zinnia" {
+		t.Errorf("detail repo = %v, want the selected Zinnia", got)
+	}
+	if state.offset != 0 || state.detailOffset != 0 {
+		t.Errorf("offsets = (%d, %d), want (0, 0) on entry", state.offset, state.detailOffset)
+	}
+}
+
+// TestTransitionDetailToHistoryResetsOffsets pins the descent into History:
+// the child viewport starts at its origin even when Detail was scrolled.
+func TestTransitionDetailToHistoryResetsOffsets(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.page = BrowseDetail
+	state.offset = 6
+	state.detailOffset = 4
+	driveKeys(t, state, keyScript(keyEnter, keyQuit))
+	if state.page != BrowseCommitHistory {
+		t.Fatalf("page = %v, want History", state.page)
+	}
+	if state.offset != 0 || state.detailOffset != 0 {
+		t.Errorf("offsets = (%d, %d), want (0, 0) on entry", state.offset, state.detailOffset)
+	}
+	// History loading shells out to git, so its content depends on the
+	// environment; the portable invariant is coherence between the loaded
+	// set, its selection, and its viewport.
+	if state.selectedCommit >= len(state.history) {
+		t.Errorf("commit selection %d out of bounds for %d loaded commits",
+			state.selectedCommit, len(state.history))
+	}
+	if len(state.history) == 0 && (state.historyOffset != 0 || state.selectedCommit != -1) {
+		t.Errorf("empty history must stay coherent, got (offset %d, selected %d)",
+			state.historyOffset, state.selectedCommit)
+	}
+}
+
+// TestTransitionHistoryToCommitSelectsCommit pins that Enter acts on the
+// highlighted commit and the Commit viewport starts at its origin.
+func TestTransitionHistoryToCommitSelectsCommit(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.page = BrowseCommitHistory
+	state.history = manyTestCommits(5)
+	state.selectedCommit = 2
+	state.detailOffset = 9
+	driveKeys(t, state, keyScript(keyEnter, keyQuit))
+	if state.page != BrowseCommitDetail {
+		t.Fatalf("page = %v, want Commit", state.page)
+	}
+	if got := state.selectedCommitObj(); got == nil || got.Subject != "commit number 2" {
+		t.Errorf("commit = %v, want the highlighted commit number 2", got)
+	}
+	if state.detailOffset != 0 || state.offset != 0 {
+		t.Errorf("offsets = (%d, %d), want (0, 0) on entry", state.detailOffset, state.offset)
+	}
+}
+
+// TestTransitionCommitToFilesStartsAtOrigin pins the deepest descent: the
+// Files viewport starts at its origin and a load failure degrades to an
+// explicit error line with the footer intact rather than wedging.
+func TestTransitionCommitToFilesStartsAtOrigin(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.page = BrowseCommitDetail
+	state.history = manyTestCommits(2)
+	state.selectedCommit = 0
+	state.detailOffset = 5
+	driveKeys(t, state, keyScript(keyEnter, keyQuit))
+	if state.page != BrowseChangedFiles {
+		t.Fatalf("page = %v, want Files", state.page)
+	}
+	if state.detailOffset != 0 || state.changedFilesOffset != 0 {
+		t.Errorf("offsets = (%d, %d), want (0, 0) on entry", state.detailOffset, state.changedFilesOffset)
+	}
+	out := captureOutput(state.render)
+	if !strings.Contains(out, "quit") {
+		t.Errorf("files page must keep its footer even on load failure:\n%q", out)
+	}
+}
+
+// TestTransitionBackChainResetsChildState pins the full ascent: each Esc
+// returns to the exact parent, child offsets reset, and the List selection
+// survives the round trip.
+func TestTransitionBackChainResetsChildState(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.page = BrowseChangedFiles
+	state.history = manyTestCommits(2)
+	state.selectedCommit = 0
+	state.changedFiles = []ChangedFile{{Status: "M", Path: "main.go"}}
+	state.detailOffset = 6
+	state.offset = 4
+	driveKeys(t, state, keyScript(keyEsc, keyEsc, keyEsc, keyEsc, keyQuit))
+	if state.page != BrowseList {
+		t.Fatalf("page = %v, want List after full ascent", state.page)
+	}
+	if state.offset != 0 || state.detailOffset != 0 {
+		t.Errorf("offsets = (%d, %d), want (0, 0) after ascent", state.offset, state.detailOffset)
+	}
+	if state.selected != 0 || state.selectedRepo() == nil {
+		t.Errorf("list selection = %d, must stay valid after ascent", state.selected)
+	}
+}
+
+// TestEmptyRepositoryNavigationIsIntentional pins the boring state at the
+// bottom of the hierarchy: a repository with no commits shows explicit
+// empty states on Detail and History, Enter from an empty History is a
+// no-op, and the footer never leaves.
+func TestEmptyRepositoryNavigationIsIntentional(t *testing.T) {
+	empty := []Repository{{Name: "fresh", Path: "/work/fresh", Branch: "main"}}
+	state := newBrowserState(empty, 1)
+	driveKeys(t, state, keyScript(keyEnter, keyQuit))
+	if state.page != BrowseDetail {
+		t.Fatalf("page = %v, want Detail", state.page)
+	}
+	if out := captureOutput(state.render); !strings.Contains(out, "No commits") {
+		t.Errorf("detail of empty repo must say No commits:\n%q", out)
+	}
+	driveKeys(t, state, keyScript(keyEnter, keyEnter, keyQuit))
+	if state.page != BrowseCommitHistory {
+		t.Fatalf("page = %v, want History (Enter on empty history is a no-op)", state.page)
+	}
+	out := captureOutput(state.render)
+	for _, want := range []string{"No commits", "quit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("empty history must show %q:\n%q", want, out)
+		}
 	}
 }
 
@@ -1193,6 +1637,166 @@ func TestRenderBrowseFooterPresence(t *testing.T) {
 	}
 }
 
+// lastOutputLine returns the final non-empty line of rendered output: every
+// interactive render path ends with the footer's trailing newline.
+func lastOutputLine(out string) string {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[len(lines)-1]
+}
+
+func manyTestRepos(n int) []Repository {
+	repos := make([]Repository, n)
+	for i := range repos {
+		repos[i] = Repository{
+			Name:           fmt.Sprintf("repo%02d", i),
+			Path:           fmt.Sprintf("/work/repo%02d", i),
+			Branch:         "main",
+			Upstream:       "origin/main",
+			LastCommitHash: "a1b2c3d4e5",
+		}
+	}
+	return repos
+}
+
+func manyTestCommits(n int) []Commit {
+	commits := make([]Commit, n)
+	for i := range commits {
+		commits[i] = Commit{
+			Hash:       fmt.Sprintf("c%06d", i),
+			Subject:    fmt.Sprintf("commit number %d", i),
+			AuthorDate: "2026-01-01",
+		}
+	}
+	return commits
+}
+
+// TestFooterExemptFromHorizontalScroll pins the chrome invariant that header
+// and footer are navigation identity, not content: at an extreme horizontal
+// offset the body may scroll away, but the breadcrumb and the keymap footer
+// must remain fully intact on every page.
+func TestFooterExemptFromHorizontalScroll(t *testing.T) {
+	t.Setenv("LINES", "24")
+	t.Setenv("COLUMNS", "40")
+	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles} {
+		state := newBrowserState(browseSample(), 3)
+		state.page = page
+		state.history = manyTestCommits(3)
+		state.selectedCommit = 0
+		state.changedFiles = []ChangedFile{{Status: "M", Path: "main.go"}}
+		state.offset = 1000 // scrolled far past any content
+		out := captureOutput(state.render)
+		if !strings.Contains(out, "KEEN ›") {
+			t.Errorf("page %v: header scrolled away at extreme offset:\n%q", page, out)
+		}
+		if last := lastOutputLine(out); !strings.Contains(last, "quit") {
+			t.Errorf("page %v: footer scrolled away at extreme offset, last line %q:\n%q", page, last, out)
+		}
+	}
+}
+
+// TestInteractiveChromeFitsTerminalHeight pins the vertical geometry
+// invariant: with full content on the fixed-overhead pages (History's
+// Repository lines, List's filter readout), header plus bounded content plus
+// footer must fit the terminal so neither chrome line scrolls away.
+func TestInteractiveChromeFitsTerminalHeight(t *testing.T) {
+	t.Setenv("COLUMNS", "80")
+	for _, h := range []int{8, 10, 12, 24} {
+		t.Setenv("LINES", strconv.Itoa(h))
+		state := newBrowserState(browseSample(), 3)
+		state.page = BrowseCommitHistory
+		state.history = manyTestCommits(30)
+		state.selectedCommit = 0
+		out := captureOutput(state.render)
+		assertChromeFitsHeight(t, out, h, "history")
+
+		filtered := newBrowserState(manyTestRepos(30), 30)
+		filtered.filtering = true
+		filtered.filterQuery = "repo"
+		filtered.applyFilter()
+		out = captureOutput(filtered.render)
+		assertChromeFitsHeight(t, out, h, "filtered list")
+	}
+}
+
+func assertChromeFitsHeight(t *testing.T, out string, h int, what string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(lines[0], "KEEN ›") {
+		t.Errorf("%s at height %d lost its header:\n%q", what, h, out)
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "quit") {
+		t.Errorf("%s at height %d lost its footer, last line %q:\n%q", what, h, last, out)
+	}
+	if len(lines) > h {
+		t.Errorf("%s rendered %d lines at height %d; chrome must fit:\n%q", what, len(lines), h, out)
+	}
+}
+
+// TestSelectedRowLineAccountsForFilterReadout pins that the selection
+// highlight tracks the selected row when the two-line filter readout pushes
+// List rows down: without it the highlight lands on the filter line itself.
+func TestSelectedRowLineAccountsForFilterReadout(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	state.selected = 1
+	state.listOffset = 0
+	if got := state.selectedRowLine(); got != 3 {
+		t.Errorf("selectedRowLine without filter = %d, want 3 (2 preamble + 1)", got)
+	}
+	state.filterQuery = "e"
+	if got := state.selectedRowLine(); got != 5 {
+		t.Errorf("selectedRowLine with filter = %d, want 5 (4 preamble + 1)", got)
+	}
+}
+
+// TestFooterKeymapsDescribeAvailableActions locks each page's keymap to the
+// actions its event handling actually supports: scroll hints appear exactly
+// where Up/Down scroll, Enter names its target surface, and no page
+// advertises a no-op Enter.
+func TestFooterKeymapsDescribeAvailableActions(t *testing.T) {
+	cases := map[BrowsePage][]string{
+		BrowseList:          {"Enter detail", "↑/↓ select", "/ filter", "q quit"},
+		BrowseDetail:        {"Enter history", "↑/↓ scroll", "←/Esc back", "q quit"},
+		BrowseCommitHistory: {"Enter commit", "↑/↓ select", "←/Esc back", "q quit"},
+		BrowseCommitDetail:  {"Enter files", "↑/↓ scroll", "←/Esc back", "q quit"},
+		BrowseChangedFiles:  {"↑/↓ scroll", "←/Esc back", "q quit"},
+	}
+	for page, wants := range cases {
+		got := renderFooter(page)
+		for _, want := range wants {
+			if !strings.Contains(got, want) {
+				t.Errorf("page %v footer %q missing %q", page, got, want)
+			}
+		}
+		assertFooterOrder(t, page.label(), got, wants)
+	}
+	if got := renderFooter(BrowseList); strings.Contains(got, "Enter inspect") {
+		t.Errorf("list footer must name its target surface (Enter detail), got %q", got)
+	}
+	if got := renderFooter(BrowseChangedFiles); strings.Contains(got, "Enter") {
+		t.Errorf("files footer must not advertise Enter (a no-op there), got %q", got)
+	}
+}
+
+// assertFooterOrder pins the canonical binding order inside a footer: the
+// tokens must appear as a subsequence in the given order (Enter first, quit
+// last), so every page reads the same way. Progressive search keeps the
+// check robust where tokens share characters (e.g. "/" inside "↑/↓").
+func assertFooterOrder(t *testing.T, what, got string, tokens []string) {
+	t.Helper()
+	rest := got
+	for _, token := range tokens {
+		idx := strings.Index(rest, token)
+		if idx < 0 {
+			t.Errorf("%s footer %q breaks canonical order at %q", what, got, token)
+			return
+		}
+		rest = rest[idx+len(token):]
+	}
+}
+
 func TestIsFilterChar(t *testing.T) {
 	for _, in := range []string{"p", "Z", "0", "-", "_", ".", " ", "日"} {
 		if !isFilterChar(in) {
@@ -1296,6 +1900,99 @@ func TestRunFilterEscClearsQuery(t *testing.T) {
 	}
 	if state.selected != 0 {
 		t.Errorf("selected = %d, want 0 after clearing filter", state.selected)
+	}
+}
+
+// TestRunFilterLiteralQAppendsWhileEditing pins the text-entry distinction:
+// a printable "q" typed while editing extends the query instead of quitting,
+// and only Ctrl+C quits from editing mode.
+func TestRunFilterLiteralQAppendsWhileEditing(t *testing.T) {
+	state := newBrowserState(browseSample(), 3)
+	before := state.selected
+	script := []struct {
+		action keyAction
+		raw    string
+	}{
+		{keyFilter, "/"},
+		{keyQuit, "q"},    // literal q: query text, not quit
+		{keyQuit, "\x03"}, // Ctrl+C while editing: quits
+	}
+	i := 0
+	captureOutput(func() {
+		state.run(func() (keyAction, string, bool) {
+			if i >= len(script) {
+				t.Error("run ignored Ctrl+C while editing")
+				return keyNone, "", false
+			}
+			s := script[i]
+			i++
+			return s.action, s.raw, true
+		})
+	})
+	if i != len(script) {
+		t.Errorf("consumed %d events, want %d (quit only on Ctrl+C)", i, len(script))
+	}
+	if state.filterQuery != "q" {
+		t.Errorf("filterQuery = %q, want %q (literal q must append)", state.filterQuery, "q")
+	}
+	if !state.filtering {
+		t.Error("editing must still be active; only Ctrl+C was structural")
+	}
+	if state.selected != -1 {
+		t.Errorf("selected = %d, want -1 (query %q matches nothing)", state.selected, state.filterQuery)
+	}
+	if len(state.repos) != 0 {
+		t.Errorf("repos = %d, want 0 zero-match results", len(state.repos))
+	}
+	_ = before
+}
+
+// TestReadKeyReturnsCompleteRune drives the platform readKey against a pipe
+// carrying multi-byte UTF-8 and requires the keystroke to arrive as one
+// complete event: fragmenting it into invalid partials would silently drop
+// CJK, emoji, and accented filter input. A lone character with no trailing
+// newline behaves identically on the byte reader and the line-fallback
+// reader, so this test is portable across platforms.
+func TestReadKeyReturnsCompleteRune(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+
+	if _, err := w.WriteString("日"); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+
+	action, raw, ok := readKey()
+	if !ok || raw != "日" || action != keyNone {
+		t.Errorf("event = (%v, %q, %v), want (keyNone, %q, true)", action, raw, ok, "日")
+	}
+	if _, _, ok = readKey(); ok {
+		t.Error("readKey must report EOF after the pipe drains")
+	}
+}
+
+// TestUtf8SequenceLen pins the leader classification behind multi-byte
+// input: ASCII and stray bytes stay single, valid leaders declare their full
+// length, and overlong/out-of-range leaders never swallow a following
+// keystroke.
+func TestUtf8SequenceLen(t *testing.T) {
+	for _, b := range []byte{"a"[0], 0x00, 0x7f, 0x80, 0xBF, 0xC0, 0xC1, 0xF5, 0xFF} {
+		if got := utf8SequenceLen(b); got != 1 {
+			t.Errorf("utf8SequenceLen(%#02x) = %d, want 1", b, got)
+		}
+	}
+	for _, tc := range []struct {
+		first byte
+		want  int
+	}{{0xC3, 2}, {0xDF, 2}, {0xE6, 3}, {0xEF, 3}, {0xF0, 4}, {0xF4, 4}} {
+		if got := utf8SequenceLen(tc.first); got != tc.want {
+			t.Errorf("utf8SequenceLen(%#02x) = %d, want %d", tc.first, got, tc.want)
+		}
 	}
 }
 

@@ -360,7 +360,9 @@ func commitLabel(repo Repository, budget int) string {
 	}
 	subject := repo.LastCommitSubject
 	if stringCellWidth(subject) > avail {
-		subject = truncateCells(subject, avail) + "…"
+		// truncateCells already carries the ellipsis; appending another
+		// would print a doubled "……".
+		subject = truncateCells(subject, avail)
 	}
 	return short + " " + subject
 }

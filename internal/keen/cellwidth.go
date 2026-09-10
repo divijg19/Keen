@@ -89,6 +89,27 @@ func padCells(s string, width int, right bool) string {
 	return s + pad
 }
 
+// utf8SequenceLen returns the total byte length of the UTF-8 sequence led by
+// first, or 1 when first is ASCII, a stray continuation byte, or otherwise
+// invalid as a sequence leader. It lives in shared code (not the unix reader)
+// so the classification stays unit-testable on every platform. Classifying
+// the leader — rather than reading until a "complete rune" — guarantees a
+// stray byte can never swallow the following keystroke into an invalid lump.
+func utf8SequenceLen(first byte) int {
+	switch {
+	case first < 0x80:
+		return 1
+	case first >= 0xC2 && first < 0xE0:
+		return 2
+	case first >= 0xE0 && first < 0xF0:
+		return 3
+	case first >= 0xF0 && first < 0xF5:
+		return 4
+	default:
+		return 1
+	}
+}
+
 // padStartCells pads s with trailing spaces to at least width terminal
 // display cells without truncating over-wide content. It preserves the
 // existing overflow behavior of the canonical and interactive row renderers
