@@ -1,6 +1,6 @@
 # Keen
 
-`keen` is a quiet, deterministic, read-only workspace orientation and repository investigation CLI. It recursively discovers Git repositories beneath the current working directory and reports their status — clean/dirty, branch, upstream synchronization, and recent commits.
+Keen is a quiet, read-only workspace-orientation and repository-investigation CLI. It recursively discovers Git repositories beneath the current working directory and provides progressively deeper information about them.
 
 ## Installation
 
@@ -8,7 +8,7 @@
 go install github.com/divijg19/Keen/cmd/keen@latest
 ```
 
-## Quick Start
+## Usage
 
 ```bash
 keen              # Canonical grouped report (clean before dirty)
@@ -16,32 +16,42 @@ keen -r           # Rich columnar report adapting to terminal width
 keen -i           # Interactive repository investigation
 ```
 
-## Presentation Modes & Flags
+## Modes
 
-| Mode / Flag | Description |
-|---|---|
-| `keen` | Grouped report with workspace summary and structural status headings. |
-| `keen --compact` | Compact one-line per repository layout with per-row status tags. |
-| `keen -r` | Rich columnar table with intelligent responsive width tiers. |
-| `keen -i` | Interactive terminal UI for deep repository and commit investigation. |
-| `--clean` / `--dirty` | Select only clean or dirty repositories. |
-| `--recent <dur>` | Select repositories with recent commits (e.g., `24h`, `7d`, `2w`). |
+| Mode | Description |
+|------|-------------|
+| `keen` | Grouped report with CLEAN/DIRTY section headings |
+| `keen --compact` | One-line per repository with per-row `[clean]`/`[dirty]` tags |
+| `keen -r` | Rich columnar table with width-aware tiers |
+| `keen -i` | Interactive investigation across five surfaces (List → Detail → History → Commit → Files) |
 
-## Interactive Investigation (`keen -i`)
+## Selection
 
-Keen provides a fast, keyboard-driven investigation surface across five hierarchical views:
-1. **List** (`REPOSITORIES`) — Addressable repository index supporting `/` filtering.
-2. **Detail** (`DETAIL`) — Full repository metadata and working-tree state.
-3. **Commit History** (`HISTORY`) — Bounded recent commit history (latest 20 commits).
-4. **Commit Detail** (`COMMIT`) — Commit metadata, author details, parents, and body.
-5. **Changed Files** (`FILES`) — Touched paths, change status, and change magnitude (`+N −N`).
+```bash
+keen --clean          # Clean repositories only
+keen --dirty          # Dirty repositories only
+keen --recent 7d      # Commits within duration (s, m, h, d, w)
+```
+
+## Example
+
+```text
+===KEEN===
+
+2 repositories, 1 clean, 1 dirty
+
+    CLEAN
+    api             (main → origin/main) ↑0 ↓0 | a1b2c3d initial commit | 2 hours ago
+
+    DIRTY
+    web             (dev) ↑– ↓– | e4f5g6h work in progress | 3 days ago
+```
 
 ## Documentation
 
-Comprehensive guides are available in `docs/`:
-- [Usage Guide](docs/usage.md) — Flags, filtering semantics, duration syntax, and invocation rules.
-- [Interactive Guide](docs/interactive.md) — Surface hierarchy, navigation keymaps, and filtering.
-- [Output Guide](docs/output.md) — Canonical, compact, and rich output formats, responsive tiers, and Unicode cell-width layout.
+- [Usage Guide](docs/usage.md) — CLI flags, filtering, duration syntax
+- [Interactive Guide](docs/interactive.md) — Five surfaces, navigation, keymaps
+- [Output Guide](docs/output.md) — Renderer formats, responsive behavior
 
 ## License
 

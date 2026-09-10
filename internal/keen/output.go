@@ -62,11 +62,14 @@ const (
 	wideSubjectFloor  = 20
 
 	// Tightened variable floors that keep all eight columns viable below the
-	// wide threshold.
+	// wide threshold. The subject floor is deliberately generous: a SUBJECT
+	// column narrower than ~12 cells shows only a truncated fragment (e.g.
+	// "v0.9.1:…") with no usable information, so the drop ladder removes the
+	// column entirely below that point instead of squeezing it.
 	tightNameFloor     = 6
 	tightBranchFloor   = 4 // e.g. "main"
 	tightUpstreamFloor = 5
-	tightSubjectFloor  = 6
+	tightSubjectFloor  = 12
 
 	// richWideMinWidth is the smallest CONTENT budget where every variable
 	// column receives at least its generous floor, measured from this
@@ -390,7 +393,13 @@ func repositoryRow(repository Repository, width int, showTag bool) string {
 	if showTag {
 		line.WriteString("[" + repoStatus(repository) + "] ")
 	}
-	fmt.Fprintf(&line, "%-15s (%-22s) %s", repository.Name, branchUpstreamLabel(repository), aheadBehindLabel(repository))
+	// Cell-aware padding keeps CJK names and branches aligned; over-wide
+	// values spill exactly as before rather than truncating identity.
+	line.WriteString(padStartCells(repository.Name, 15))
+	line.WriteString(" (")
+	line.WriteString(padStartCells(branchUpstreamLabel(repository), 22))
+	line.WriteString(") ")
+	line.WriteString(aheadBehindLabel(repository))
 
 	remaining := func() int {
 		if width <= 0 {
