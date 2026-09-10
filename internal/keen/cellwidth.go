@@ -88,3 +88,15 @@ func padCells(s string, width int, right bool) string {
 	}
 	return s + pad
 }
+
+// padStartCells pads s with trailing spaces to at least width terminal
+// display cells without truncating over-wide content. It preserves the
+// existing overflow behavior of the canonical and interactive row renderers
+// (long values spill rather than truncate) while aligning CJK and other
+// wide content correctly, which rune-counted %-s verbs cannot do.
+func padStartCells(s string, width int) string {
+	if d := width - stringCellWidth(s); d > 0 {
+		return s + strings.Repeat(" ", d)
+	}
+	return s
+}

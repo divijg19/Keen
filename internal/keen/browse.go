@@ -6,6 +6,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"unicode"
+	"unicode/utf8"
 )
 
 // keyAction is the normalized result of reading one user input event in the
@@ -25,6 +27,7 @@ const (
 	keyDown
 	keyEnter
 	keyFilter
+	keyBackspace
 )
 
 // BrowsePage identifies the active surface of the interactive investigation.
@@ -37,8 +40,6 @@ const (
 	BrowseCommitDetail
 	BrowseChangedFiles
 )
-
-const browsePageCount = 5
 
 func (p BrowsePage) label() string {
 	switch p {
@@ -82,17 +83,61 @@ func interpretSequence(seq string) keyAction {
 		return keyDown
 	case "\r", "\n", "\x1bOM": // Enter: CR, LF, keypad Enter
 		return keyEnter
+	case "\x7f", "\x08": // Backspace: DEL and BS control forms
+		return keyBackspace
 	}
 	return keyNone
 }
 
+// isFilterChar reports whether raw is a single printable rune suitable for
+// appending to the interactive filter query. Control sequences, escape
+// sequences, and multi-rune inputs are never query text.
+func isFilterChar(raw string) bool {
+	if !utf8.ValidString(raw) {
+		return false
+	}
+	r := []rune(raw)
+	if len(r) != 1 {
+		return false
+	}
+	return unicode.IsPrint(r[0])
+}
+
+// appendFilterChar appends one printable character to the filter query.
+func (b *browserState) appendFilterChar(raw string) {
+	b.filterQuery += raw
+	b.applyFilter()
+}
+
+// backspaceFilter removes the final rune from the filter query safely,
+// handling multi-byte characters without splitting them.
+func (b *browserState) backspaceFilter() {
+	if b.filterQuery == "" {
+		return
+	}
+	r := []rune(b.filterQuery)
+	b.filterQuery = string(r[:len(r)-1])
+	b.applyFilter()
+}
+
+// exitFilterEditing leaves filter editing mode. When keep is true the current
+// query stays active; otherwise the query is cleared and the full set
+// restored. Selection and viewport invariants are preserved via applyFilter.
+func (b *browserState) exitFilterEditing(keep bool) {
+	if !keep {
+		b.filterQuery = ""
+		b.applyFilter()
+	}
+	b.filtering = false
+}
+
 // browseHeaderLine is the index of the view-indicator header within the screen
 // produced by renderBrowse. The layout contract is fixed: renderBrowse emits
-// the header carrying the active view label and page counter (line 0),
-// followed by a blank separator (line 1). browserState.render keeps exactly
-// this line exempt from horizontal slicing so the active view remains
-// identifiable at every offset; only body content scrolls. No application
-// banner is drawn: the header already orients the user on every repaint.
+// the breadcrumb header carrying the view hierarchy (line 0), followed by a
+// blank separator (line 1). browserState.render keeps exactly this line
+// exempt from horizontal slicing so the active view remains identifiable at
+// every offset; only body content scrolls. No application banner is drawn:
+// the header alone orients the user on every repaint.
 const browseHeaderLine = 0
 
 // browseChromeRows is the fixed count of vertical chrome rows occupied by the
@@ -119,6 +164,7 @@ type browserState struct {
 	historyOffset      int // vertical viewport offset for commit history
 	changedFiles       []ChangedFile
 	changedFilesOffset int
+	detailOffset       int // vertical viewport offset for Detail/Commit/Files content
 	historyErr         string
 	changedFilesErr    string
 	filtering          bool
@@ -280,6 +326,64 @@ func (b *browserState) selectedCommitObj() *Commit {
 	return &b.history[b.selectedCommit]
 }
 
+// windowLines returns at most maxRows lines starting at offset, with offset
+// clamped into range. It is the pure primitive behind bounded detail content:
+// long Detail/Commit/Files bodies are windowed so the footer remains visible
+// instead of being pushed below the terminal.
+func windowLines(lines []string, offset, maxRows int) ([]string, int) {
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	maxOffset := len(lines) - maxRows
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	end := offset + maxRows
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return lines[offset:end], offset
+}
+
+// splitContentLines splits rendered content into lines, dropping the single
+// trailing empty element produced by a trailing newline so windowing counts
+// real content rows.
+func splitContentLines(content string) []string {
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+// boundedDetailContent windows detail-page content to the available rows,
+// clamping and persisting the shared detailOffset so Detail, Commit Detail,
+// and Changed Files all keep the footer visible.
+func (b *browserState) boundedDetailContent(content string) string {
+	lines := splitContentLines(content)
+	windowed, offset := windowLines(lines, b.detailOffset, b.availableRows())
+	b.detailOffset = offset
+	if len(windowed) == 0 {
+		return ""
+	}
+	return strings.Join(windowed, "\n") + "\n"
+}
+
+// scrollDetail moves the shared detail viewport by delta rows, clamped on
+// the next render against the actual content height.
+func (b *browserState) scrollDetail(delta int) {
+	b.detailOffset += delta
+	if b.detailOffset < 0 {
+		b.detailOffset = 0
+	}
+}
+
 func (b *browserState) loadHistoryForSelected() {
 	b.history = nil
 	b.selectedCommit = -1
@@ -405,7 +509,7 @@ func (b *browserState) render() {
 	case BrowseDetail:
 		if repo := b.selectedRepo(); repo != nil {
 			header := b.renderHeader()
-			content := renderDetail(*repo)
+			content := b.boundedDetailContent(renderDetail(*repo))
 			footer := renderFooter(b.page)
 			full = header + content + "\n" + footer
 		} else {
@@ -417,7 +521,7 @@ func (b *browserState) render() {
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
 				header := b.renderHeader()
-				content := renderCommitDetail(*repo, *c)
+				content := b.boundedDetailContent(renderCommitDetail(*repo, *c))
 				footer := renderFooter(b.page)
 				full = header + content + "\n" + footer
 			} else {
@@ -430,7 +534,7 @@ func (b *browserState) render() {
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
 				header := b.renderHeader()
-				content := renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr)
+				content := b.boundedDetailContent(renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr))
 				footer := renderFooter(b.page)
 				full = header + content + "\n" + footer
 			} else {
@@ -532,20 +636,16 @@ func (b *browserState) renderListContent() string {
 	// The List is an addressable index, not a full repository report: it
 	// shows identity, the single status signal, branch, and synchronization.
 	// Secondary facts (upstream path, commit identity) live in Detail and
-	// Activity. The selected row is marked with a leading pointer-like glyph
-	// and additionally highlighted by the renderer on a terminal.
+	// Activity. The selected row is identified solely by the reverse-video
+	// highlight applied by the renderer on a terminal; no pointer glyph
+	// competes with it, keeping the row visually quiet.
 	nameW, branchW, _ := overviewWidths(b.viewport)
 	for i := start; i < end; i++ {
 		r := b.repos[i]
-		cursor := "  "
-		if i == b.selected {
-			cursor = "▸ "
-		}
-		row := fmt.Sprintf("%s%s[%-5s] %-*s %-*s %s",
-			reportIndent, cursor, repoStatus(r),
-			nameW, r.Name,
-			branchW, branchLabel(r),
-			aheadBehindLabel(r))
+		row := reportIndent + "  [" + padStartCells(repoStatus(r), 5) + "] " +
+			padStartCells(r.Name, nameW) + " " +
+			padStartCells(branchLabel(r), branchW) + " " +
+			aheadBehindLabel(r)
 		sb.WriteString(row + "\n")
 	}
 	sb.WriteString("\n")
@@ -581,13 +681,11 @@ func (b *browserState) renderCommitHistoryContent() string {
 	if end > len(b.history) {
 		end = len(b.history)
 	}
+	// The selected commit is identified solely by the reverse-video highlight
+	// applied by the renderer; no pointer glyph competes with it.
 	for i := start; i < end; i++ {
 		c := b.history[i]
-		cursor := "  "
-		if i == b.selectedCommit {
-			cursor = "▸ "
-		}
-		row := fmt.Sprintf("%s%s%s  %s  %s", reportIndent+cursor, shortHash(c.Hash), " ", c.Subject, c.AuthorDate)
+		row := fmt.Sprintf("%s  %s   %s  %s", reportIndent, shortHash(c.Hash), c.Subject, c.AuthorDate)
 		// Simplified row; horizontal viewport reveals overflow.
 		sb.WriteString(row + "\n")
 	}
@@ -641,15 +739,42 @@ func renderChangedFilesForCommit(repo Repository, c Commit, files []ChangedFile,
 
 // run consumes input events until the user quits or the input stream ends.
 // The read function is injected so the navigation loop stays exercisable
-// without a terminal; production Browse passes readKey.
-func (b *browserState) run(read func() (keyAction, bool)) {
+// without a terminal; production Browse passes readKey. The raw sequence
+// accompanies the normalized action so filter editing can consume printable
+// characters that interpretSequence otherwise reports as keyNone.
+func (b *browserState) run(read func() (keyAction, string, bool)) {
 	for {
-		action, ok := read()
+		action, raw, ok := read()
 		if !ok {
 			// The stream ended or failed permanently (EOF, closed or hung-up
 			// tty, I/O error). Quit cleanly so the caller's deferred
 			// restoreRaw executes; never busy-loop on a dead stream.
 			return
+		}
+		if b.filtering && b.page == BrowseList {
+			switch action {
+			case keyQuit:
+				return
+			case keyEsc:
+				b.exitFilterEditing(false)
+				b.render()
+			case keyEnter:
+				b.exitFilterEditing(true)
+				b.render()
+			case keyBackspace:
+				b.backspaceFilter()
+				b.render()
+			default:
+				// Printable characters extend the query; navigation and
+				// scrolling keys are ignored while editing so selection
+				// cannot move accidentally. "q" maps to keyQuit above and
+				// therefore quits rather than typing.
+				if isFilterChar(raw) {
+					b.appendFilterChar(raw)
+					b.render()
+				}
+			}
+			continue
 		}
 		switch action {
 		case keyUp:
@@ -660,6 +785,9 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 			case BrowseCommitHistory:
 				b.moveCommitSelection(-1)
 				b.render()
+			case BrowseDetail, BrowseCommitDetail, BrowseChangedFiles:
+				b.scrollDetail(-1)
+				b.render()
 			}
 		case keyDown:
 			switch b.page {
@@ -669,6 +797,9 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 			case BrowseCommitHistory:
 				b.moveCommitSelection(1)
 				b.render()
+			case BrowseDetail, BrowseCommitDetail, BrowseChangedFiles:
+				b.scrollDetail(1)
+				b.render()
 			}
 		case keyEnter:
 			switch b.page {
@@ -676,23 +807,27 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 				if b.selected >= 0 {
 					b.page = BrowseDetail
 					b.offset = 0
+					b.detailOffset = 0
 					b.render()
 				}
 			case BrowseDetail:
 				b.loadHistoryForSelected()
 				b.page = BrowseCommitHistory
 				b.offset = 0
+				b.detailOffset = 0
 				b.render()
 			case BrowseCommitHistory:
 				if b.selectedCommit >= 0 && b.selectedCommit < len(b.history) {
 					b.page = BrowseCommitDetail
 					b.offset = 0
+					b.detailOffset = 0
 					b.render()
 				}
 			case BrowseCommitDetail:
 				b.loadChangedFilesForSelectedCommit()
 				b.page = BrowseChangedFiles
 				b.offset = 0
+				b.detailOffset = 0
 				b.render()
 			}
 		case keyLeft, keyEsc:
@@ -700,18 +835,22 @@ func (b *browserState) run(read func() (keyAction, bool)) {
 			case BrowseDetail:
 				b.page = BrowseList
 				b.offset = 0
+				b.detailOffset = 0
 				b.render()
 			case BrowseCommitHistory:
 				b.page = BrowseDetail
 				b.offset = 0
+				b.detailOffset = 0
 				b.render()
 			case BrowseCommitDetail:
 				b.page = BrowseCommitHistory
 				b.offset = 0
+				b.detailOffset = 0
 				b.render()
 			case BrowseChangedFiles:
 				b.page = BrowseCommitDetail
 				b.offset = 0
+				b.detailOffset = 0
 				b.render()
 			case BrowseList:
 				// Left/Esc are not bound from the list; q or Ctrl+C quit.
@@ -806,30 +945,54 @@ func Browse(repos []Repository, totalDiscovered int) {
 	state.run(readKey)
 }
 
-// sliceViewport returns the rune window [offset, offset+width) of s, with the
-// offset and end clamped to the string bounds. It is the single primitive that
-// realizes the horizontal viewport: a view wider than the terminal is revealed
-// progressively by moving the offset.
+// sliceViewport returns the terminal-cell window [offset, offset+width) of s.
+// Offsets and widths are display cells, matching contentWidth and the
+// terminal width, so CJK and other wide content scrolls coherently instead of
+// drifting. Wide characters straddling a window edge are skipped rather than
+// split; zero-width characters ride with their cell position. ASCII content
+// behaves exactly as a rune window.
 func sliceViewport(s string, offset, width int) string {
-	r := []rune(s)
+	if width <= 0 {
+		return ""
+	}
 	if offset < 0 {
 		offset = 0
 	}
-	if offset > len(r) {
-		offset = len(r)
+	var sb strings.Builder
+	cur := 0 // cells consumed so far
+	for _, r := range s {
+		rw := runeCellWidth(r)
+		if rw <= 0 {
+			if cur >= offset && cur < offset+width {
+				sb.WriteRune(r)
+			}
+			continue
+		}
+		if cur+rw <= offset {
+			cur += rw
+			continue
+		}
+		if cur >= offset+width {
+			break
+		}
+		if cur < offset || cur+rw > offset+width {
+			cur += rw
+			continue
+		}
+		sb.WriteRune(r)
+		cur += rw
 	}
-	end := offset + width
-	if end > len(r) {
-		end = len(r)
-	}
-	return string(r[offset:end])
+	return sb.String()
 }
 
-// renderBannerAndHeader emits the shared screen chrome: the active-view line
-// carrying the view label and page counter, followed by a blank separator. It
-// is the single canonical source for this chrome so every page renders an
-// identical header. No application banner is drawn; the header alone orients
-// the user on every repaint.
+// renderBannerAndHeader emits the shared screen chrome: the breadcrumb line
+// carrying the view hierarchy, followed by a blank separator. It is the
+// single canonical source for this chrome so every page renders an identical
+// header. The former global "n / 5" step counter was removed in v0.9.2: the
+// five surfaces form a selection-dependent hierarchy, not a linear wizard,
+// so the counter added noise without orientation value. The semantic
+// breadcrumb alone answers "where am I". Width is retained for future
+// truncation budgets; over-wide titles are never padded into collisions.
 func renderBannerAndHeader(page BrowsePage, repoName string, width int) string {
 	var sb strings.Builder
 	var title string
@@ -838,14 +1001,13 @@ func renderBannerAndHeader(page BrowsePage, repoName string, width int) string {
 	} else {
 		title = fmt.Sprintf("KEEN › %s › %s", repoName, page.label())
 	}
-	indicator := fmt.Sprintf("%d / %d", int(page)+1, browsePageCount)
-	pad := width - stringCellWidth(title) - stringCellWidth(indicator)
-	if pad < 0 {
-		pad = 0
+	// Over-wide titles truncate at a cell boundary instead of colliding.
+	// Repository identity in the header is orientation, not the canonical
+	// record: the full path remains on Detail.
+	if width > 0 && stringCellWidth(title) > width {
+		title = truncateCells(title, width)
 	}
 	sb.WriteString(title)
-	sb.WriteString(strings.Repeat(" ", pad))
-	sb.WriteString(indicator)
 	sb.WriteString("\n\n")
 	return sb.String()
 }
@@ -858,7 +1020,7 @@ func renderFooter(page BrowsePage) string {
 	case BrowseDetail:
 		hint = "Enter history    ←/Esc back    q quit"
 	case BrowseCommitHistory:
-		hint = "↑/↓ select    Enter detail    ←/Esc back    q quit"
+		hint = "↑/↓ select    Enter commit    ←/Esc back    q quit"
 	case BrowseCommitDetail:
 		hint = "Enter files    ←/Esc back    q quit"
 	case BrowseChangedFiles:
@@ -943,12 +1105,11 @@ func renderOverview(repos []Repository, totalDiscovered int, width int) string {
 // width (no field truncation); the horizontal viewport reveals any content
 // wider than the terminal.
 func renderOverviewRow(r Repository, nameW, branchW, upstreamW int) string {
-	return fmt.Sprintf("%s%-*s %-*s %-*s %s",
-		reportIndent,
-		nameW, r.Name,
-		branchW, branchLabel(r),
-		upstreamW, upstreamLabel(r),
-		aheadBehindLabel(r))
+	return reportIndent +
+		padStartCells(r.Name, nameW) + " " +
+		padStartCells(branchLabel(r), branchW) + " " +
+		padStartCells(upstreamLabel(r), upstreamW) + " " +
+		aheadBehindLabel(r)
 }
 
 // renderDetail renders the bounded repository detail view for one selected

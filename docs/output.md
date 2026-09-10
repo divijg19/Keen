@@ -16,12 +16,15 @@ Dense one-line representation optimized for fast scanning or script-adjacent hum
 
 ## 3. Rich Output (`keen -r`)
 
-Columnar aligned report presenting the same information semantics as interactive views.
-- **Explicit Width Tiers**:
-  - **Wide**: `NAME | BRANCH | UPSTREAM | AHEAD | BEHIND | HASH | SUBJECT | TIME`
-  - **Medium**: Compact comparison schema
-  - **Narrow / Fallback**: Automatic silent degradation to canonical grouped output below minimum width threshold.
-- Tested across 12 explicit terminal widths (40 to 200).
+Columnar aligned report presenting the same information semantics as interactive views. Columns drop by information value, not merely geometry: a field that fits but carries almost no usable content is removed.
+- **Explicit Width Tiers** (terminal widths, four-space indent included):
+  - **Wide (≥95)**: `NAME | BRANCH | UPSTREAM | AHEAD | BEHIND | HASH | SUBJECT | TIME`, proportionally allocated.
+  - **Tight (68–94)**: Same eight columns on tightened floors.
+  - **Seven-column (61–67)**: `TIME` dropped; `SUBJECT` kept on a 12-cell floor.
+  - **Six-column (50–60)**: `TIME` and `SUBJECT` dropped; identity, branch, upstream, sync, and hash remain.
+  - **Fallback (<50)**: Automatic silent degradation to the byte-identical canonical grouped output.
+- `AHEAD`/`BEHIND` drop atomically, never half a divergence fact. `NAME` is never dropped. `SUBJECT` needs at least 12 cells to be useful, so narrower budgets drop it instead of squeezing a fragment.
+- Tested across explicit terminal widths (40 to 200) at behavioral boundaries.
 
 ## 4. Repository Identity & Unicode
 

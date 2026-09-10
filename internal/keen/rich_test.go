@@ -178,16 +178,20 @@ func lineWidth(s string) int {
 // report indent (content budget = terminal width - 4).
 //
 // Widths are boundary triplets (N-1/N/N+1) around each measured transition
-// (fallback|table = 50, TIME-drop|eight-column = 62, wide = 95) rather than
-// arbitrary samples. Status is structural: with the STATUS column removed in
-// v0.8.1 the table spans fewer columns, so every threshold shifts left and a
-// full eight-column table fits from terminal width 62.
+// (fallback|table = 50, SUBJECT-drop|seven-column = 61, eight-column = 68,
+// wide = 95) rather than arbitrary samples. Status is structural: with the
+// STATUS column removed in v0.8.1 the table spans fewer columns. Since v0.9.2
+// the SUBJECT floor is 12 cells (a narrower SUBJECT shows only a useless
+// fragment), so widths 50-67 drop SUBJECT: 50/51 render a six-column table
+// (TIME and SUBJECT dropped) and 61-67 a seven-column table (TIME dropped).
+// A full eight-column tight table fits from terminal width 68.
 func TestRenderRichWidthMatrix(t *testing.T) {
 	repos := richMatrixFixture()
 	widths := []int{
 		40,         // deep fallback probe
-		49, 50, 51, // fallback | shallow 7-column table
-		61, 62, 63, // 7-column | full eight-column threshold
+		49, 50, 51, // fallback | six-column table (TIME and SUBJECT dropped)
+		61,         // seven-column probe (TIME dropped, SUBJECT kept)
+		67, 68, 69, // seven-column | full eight-column threshold
 		94, 95, 96, // tight adaptive | wide proportional
 		120, 200, // comfortable wide probes
 	}
@@ -247,17 +251,26 @@ func TestRenderRichWidthMatrix(t *testing.T) {
 				if !hasHeader(cols, "SUBJECT") || !hasHeader(cols, "TIME") {
 					t.Errorf("width %d: expected wide eight-column set, got %+v", width, cols)
 				}
-			case width >= 62:
+			case width >= 68:
 				if !hasHeader(cols, "SUBJECT") || !hasHeader(cols, "TIME") {
 					t.Errorf("width %d: expected full eight-column tight set, got %+v", width, cols)
 				}
-			case width >= 50:
+			case width >= 61:
 				if hasHeader(cols, "TIME") || !hasHeader(cols, "SUBJECT") {
 					t.Errorf("width %d: expected SUBJECT kept and TIME dropped, got %+v", width, cols)
 				}
 				for _, h := range []string{"NAME", "BRANCH", "UPSTREAM", "AHEAD", "BEHIND", "HASH", "SUBJECT"} {
 					if !hasHeader(cols, h) {
-						t.Errorf("width %d: shallow table lost %s: %+v", width, h, cols)
+						t.Errorf("width %d: seven-column table lost %s: %+v", width, h, cols)
+					}
+				}
+			case width >= 50:
+				if hasHeader(cols, "TIME") || hasHeader(cols, "SUBJECT") {
+					t.Errorf("width %d: expected TIME and SUBJECT dropped, got %+v", width, cols)
+				}
+				for _, h := range []string{"NAME", "BRANCH", "UPSTREAM", "AHEAD", "BEHIND", "HASH"} {
+					if !hasHeader(cols, h) {
+						t.Errorf("width %d: six-column table lost %s: %+v", width, h, cols)
 					}
 				}
 			}

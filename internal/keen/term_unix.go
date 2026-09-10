@@ -90,20 +90,24 @@ func restoreRaw(fd int) {
 	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), tcsets, uintptr(unsafe.Pointer(&savedTerm)))
 }
 
-// readKey blocks for one input event. The boolean reports whether the input
-// stream is still alive; when it is false (EOF, closed or hung-up tty, I/O
-// error) the caller must terminate the interactive session so terminal
-// restoration runs instead of spinning on a dead stream.
-func readKey() (keyAction, bool) {
+// readKey blocks for one input event. The raw sequence accompanies the
+// normalized action so callers (notably filter editing) can consume printable
+// characters. The boolean reports whether the input stream is still alive;
+// when it is false (EOF, closed or hung-up tty, I/O error) the caller must
+// terminate the interactive session so terminal restoration runs instead of
+// spinning on a dead stream.
+func readKey() (keyAction, string, bool) {
 	buf := make([]byte, 1)
 	n, err := os.Stdin.Read(buf)
 	if err != nil || n == 0 {
-		return keyNone, false
+		return keyNone, "", false
 	}
 	if buf[0] == 0x1b {
-		return interpretSequence("\x1b" + readTrailing()), true
+		raw := "\x1b" + readTrailing()
+		return interpretSequence(raw), raw, true
 	}
-	return interpretSequence(string(buf[0])), true
+	raw := string(buf[0])
+	return interpretSequence(raw), raw, true
 }
 
 // readTrailing consumes up to eight more bytes after an ESC without blocking,

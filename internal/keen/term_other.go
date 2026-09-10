@@ -20,21 +20,22 @@ func restoreRaw(fd int) {}
 // readKey falls back to line-based input: one line equals one navigation
 // event. This keeps the interactive investigation surface usable (if awkward) on
 // unsupported platforms without pulling in a third-party terminal library. The
-// boolean reports whether the input stream is still alive; a false value ends
-// the session.
-func readKey() (keyAction, bool) {
+// raw line accompanies the normalized action so filter editing can consume
+// printable input. The boolean reports whether the input stream is still
+// alive; a false value ends the session.
+func readKey() (keyAction, string, bool) {
 	reader := bufio.NewReader(os.Stdin)
 	s, err := reader.ReadString('\n')
 	if err != nil && s == "" {
 		// Stream ended or failed permanently (EOF on closed stdin, I/O
 		// error). Signal termination so the caller cannot busy-loop.
-		return keyNone, false
+		return keyNone, "", false
 	}
 	s = strings.TrimRight(s, "\r\n")
 	if s == "" {
-		return keyNone, true
+		return keyNone, "", true
 	}
-	return interpretSequence(s), true
+	return interpretSequence(s), s, true
 }
 
 func terminalWidth() int {
