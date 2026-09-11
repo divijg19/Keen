@@ -1,0 +1,170 @@
+name: Release
+
+# Tag-triggered release: pushing a version tag publishes versioned binaries
+# for every supported platform plus checksums to a GitHub Release. The
+# version identity is injected at link time (-X main.version), matching the
+# mechanism documented in cmd/keen. Validate runs the fast gates first so a
+# broken tree never reaches packaging.
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Validate tag
+        run: |
+          set -euo pipefail
+          if [[ ! "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must look like v1.2.3; got '${{ github.ref_name }}'" >&2
+            exit 1
+          fi
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -count=1 ./...
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          bin="dist/keen_${TAG}_${GOOS}_${GOARCH}"
+          [ "${GOOS}" = "windows" ] && bin="${bin}.exe"
+          go build -trimpath -ldflags "-s -w -X main.version=${TAG}" -o "${bin}" ./cmd/keen
+          test -s "${bin}"
+
+      - name: Smoke-test linux binary
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          BIN="$PWD/dist/keen_${TAG}_linux_amd64"
+          test "$("$BIN" -version)" = "keen ${TAG}"
+          "$BIN" --help >/dev/null
+          rm -rf /tmp/keen-smoke && mkdir -p /tmp/keen-smoke/demo
+          (
+            cd /tmp/keen-smoke/demo
+            git init -q
+            git -c user.email=ci@keen -c user.name=ci commit -q --allow-empty -m init
+          )
+          (cd /tmp/keen-smoke && "$BIN" | grep -q "demo")
+          (cd /tmp/keen-smoke && "$BIN" --clean | grep -q "demo")
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: keen-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/keen_*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare release assets
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release
+          for file in dist/keen-*/*; do
+            mv "${file}" release/
+          done
+          expected=(
+            "keen_${TAG}_linux_amd64"
+            "keen_${TAG}_linux_arm64"
+            "keen_${TAG}_darwin_amd64"
+            "keen_${TAG}_darwin_arm64"
+            "keen_${TAG}_windows_amd64.exe"
+          )
+          for asset in "${expected[@]}"; do
+            test -s "release/${asset}"
+          done
+          (cd release && sha256sum keen_* > checksums.txt)
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/keen_${{ github.ref_name }}_linux_amd64
+            release/keen_${{ github.ref_name }}_linux_arm64
+            release/keen_${{ github.ref_name }}_darwin_amd64
+            release/keen_${{ github.ref_name }}_darwin_arm64
+            release/keen_${{ github.ref_name }}_windows_amd64.exe
+            release/checksums.txt
