@@ -28,5 +28,5 @@ Columnar aligned report presenting the same information semantics as interactive
 
 ## 4. Repository Identity & Unicode
 
-- **Collision-Aware Display Identities**: Repositories are shown by basename (`api`), gaining minimal parent qualification only when name collisions occur (`work/api`, `personal/api`).
-- **Terminal-Cell-Aware Layout**: Built-in support for CJK, Hangul, Fullwidth forms, emoji, and combining characters via cell-width measurement (`stringCellWidth`, `truncateCells`, `padCells`).
+- **Collision-Aware Display Identities**: Repositories are shown by basename (`api`), gaining minimal parent qualification only when name collisions occur (`work/api`, `personal/api`). Identities resolve after filtering, so interactive filtering re-resolves against the visible subset.
+- **Terminal-Cell-Aware Layout**: Display-cell-aware layout for ordinary ASCII and common wide terminal characters (CJK, Hangul, Fullwidth forms, common emoji) via cell-width measurement (`stringCellWidth`, `truncateCells`, `padCells`, `padStartCells`); the horizontal viewport (`sliceViewport`) works in display cells. Wide characters straddling a viewport or truncation edge are skipped rather than split; zero-width and combining characters ride with their cell position. Keen does not implement a complete Unicode grapheme-cluster shaping engine, and no external Unicode dependency is used.

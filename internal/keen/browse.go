@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unicode"
@@ -56,6 +57,11 @@ func (p BrowsePage) label() string {
 	}
 	return "?"
 }
+
+// browsePageCount is the number of interactive surfaces in the investigation
+// hierarchy (List → Detail → History → Commit → Files). The header shows the
+// current surface's position ("n / 5") right-aligned on the breadcrumb line.
+const browsePageCount = 5
 
 // interpretSequence normalizes a single input token into a keyAction. It
 // accepts literal key characters and ANSI escape sequences so the function
@@ -199,7 +205,23 @@ func (b *browserState) applyFilter() {
 				matched = append(matched, r)
 			}
 		}
-		b.repos = matched
+		// Identities are re-resolved against the visible subset, mirroring
+		// the pipeline's Discover → … → Filter → ResolveDisplayIdentities
+		// order: when filtering removes one member of a collision group,
+		// the survivor sheds its parent qualification instead of showing a
+		// stale one. The display identity is derived, never stored, so
+		// re-resolution restarts from basenames (Enrich sets Name to the
+		// path basename) exactly as the pipeline feeds it; entries without
+		// a path keep their existing name since no basename is derivable.
+		// Clearing the query restores the full-set identities.
+		subset := make([]Repository, len(matched))
+		for i, r := range matched {
+			if r.Path != "" {
+				r.Name = filepath.Base(r.Path)
+			}
+			subset[i] = r
+		}
+		b.repos = ResolveDisplayIdentities(subset)
 	}
 	b.clampSelection()
 	b.ensureVisible()
@@ -233,7 +255,7 @@ func (b *browserState) ensureVisible() {
 		b.listOffset = 0
 		return
 	}
-	availableRows := b.availableRows()
+	availableRows := b.listBodyRows()
 	if availableRows <= 0 {
 		availableRows = 1
 	}
@@ -269,6 +291,35 @@ func (b *browserState) availableRows() int {
 	return avail
 }
 
+// listBodyRows is the selectable-row budget for the List surface. When the
+// filter query line is displayed it consumes two fixed rows ("filter:
+// <query>" plus its blank separator) beyond the shared chrome budget, so the
+// window shrinks accordingly; otherwise the full shared budget applies.
+// Keeping this budget identical between ensureVisible and renderListContent
+// guarantees the selected row is always inside the rendered window.
+func (b *browserState) listBodyRows() int {
+	rows := b.availableRows()
+	if b.filterQuery != "" {
+		rows -= 2
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
+// historyBodyRows is the selectable-row budget for the History surface. The
+// "Repository:" line and its blank separator consume two fixed rows beyond
+// the shared chrome budget. Shared with ensureCommitVisible and
+// renderCommitHistoryContent so the selected commit is always rendered.
+func (b *browserState) historyBodyRows() int {
+	rows := b.availableRows() - 2
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
 func (b *browserState) clampCommitSelection() {
 	if len(b.history) == 0 {
 		b.selectedCommit = -1
@@ -297,7 +348,7 @@ func (b *browserState) ensureCommitVisible() {
 		b.historyOffset = 0
 		return
 	}
-	availableRows := b.availableRows()
+	availableRows := b.historyBodyRows()
 	if availableRows <= 0 {
 		availableRows = 1
 	}
@@ -547,13 +598,23 @@ func (b *browserState) render() {
 		full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 	}
 	lines := strings.Split(full, "\n")
+	// The footer is always the final content line: every render path ends
+	// with the keymap footer's trailing newline (renderFooter, or the
+	// filter-editing footer on a filtering List), so the hint sits at
+	// len-2 with a single empty element after it. Like the header, the
+	// footer is chrome, not content: it is never horizontally scrolled and
+	// never carries the selection highlight.
+	footerLine := -1
+	if len(lines) >= 2 {
+		footerLine = len(lines) - 2
+	}
 	var out strings.Builder
 	selLine := b.selectedRowLine()
 	for i, line := range lines {
-		if i == browseHeaderLine {
-			// The view indicator is navigation identity, not content: it
-			// must remain visible and stable at every horizontal offset.
-			// Only body lines scroll.
+		if i == browseHeaderLine || i == footerLine {
+			// The view indicator and the keymap footer are navigation
+			// identity, not content: they remain visible and stable at
+			// every horizontal offset. Only body lines scroll.
 			out.WriteString(line)
 		} else {
 			sliced := sliceViewport(line, b.offset, b.viewport)
@@ -582,15 +643,21 @@ func (b *browserState) render() {
 // selectedRowLine returns the index, within the current page's full rendered
 // content, of the currently selected row, or -1 when no selectable row is on
 // the page. Every list surface shares a constant two-line preamble (the view
-// header on line 0 and a blank separator on line 1); the commit-history page
-// additionally renders a Repository line and a blank line before its rows.
+// header on line 0 and a blank separator on line 1); the List page inserts
+// the two-line filter readout above its rows while a query is displayed, and
+// the commit-history page renders a Repository line and a blank line before
+// its rows.
 func (b *browserState) selectedRowLine() int {
 	switch b.page {
 	case BrowseList:
 		if b.selected < 0 {
 			return -1
 		}
-		return 2 + (b.selected - b.listOffset)
+		base := 2
+		if b.filterQuery != "" {
+			base = 4
+		}
+		return base + (b.selected - b.listOffset)
 	case BrowseCommitHistory:
 		if b.selectedCommit < 0 {
 			return -1
@@ -620,13 +687,13 @@ func (b *browserState) renderListContent() string {
 
 	if len(b.repos) == 0 {
 		sb.WriteString(reportIndent + emptyMessage(b.total) + "\n\n")
-		sb.WriteString(renderFooter(b.page))
+		sb.WriteString(b.listFooter())
 		return sb.String()
 	}
 
 	// Ensure selected visible before rendering.
 	b.ensureVisible()
-	availableRows := b.availableRows()
+	availableRows := b.listBodyRows()
 	start := b.listOffset
 	end := start + availableRows
 	if end > len(b.repos) {
@@ -636,7 +703,7 @@ func (b *browserState) renderListContent() string {
 	// The List is an addressable index, not a full repository report: it
 	// shows identity, the single status signal, branch, and synchronization.
 	// Secondary facts (upstream path, commit identity) live in Detail and
-	// Activity. The selected row is identified solely by the reverse-video
+	// the commit surfaces. The selected row is identified solely by the reverse-video
 	// highlight applied by the renderer on a terminal; no pointer glyph
 	// competes with it, keeping the row visually quiet.
 	nameW, branchW, _ := overviewWidths(b.viewport)
@@ -649,8 +716,29 @@ func (b *browserState) renderListContent() string {
 		sb.WriteString(row + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(renderFooter(b.page))
+	sb.WriteString(b.listFooter())
 	return sb.String()
+}
+
+// listFooter selects the List keymap footer for the current input state.
+// While filter editing is active the normal List footer would lie — ↑/↓ do
+// not move, "/" types, "q" is query text, Enter does not inspect — so the
+// footer swaps to the editing keymap describing exactly what each key does,
+// including the Ctrl+C quit path. Every other state keeps renderFooter.
+func (b *browserState) listFooter() string {
+	if b.filtering {
+		return renderFilterFooter()
+	}
+	return renderFooter(b.page)
+}
+
+// renderFilterFooter is the keymap footer shown while filter editing is
+// active. Typing is the mode's primary action so it leads; the remaining
+// entries follow the canonical page-footer order — Enter accepts, Backspace
+// deletes rune-safely (including "q", "/", "H", "L" as typed text), Esc
+// clears, and Ctrl+C quits from anywhere, even mid-query, with quit last.
+func renderFilterFooter() string {
+	return reportIndent + "type to filter    Enter accept    Backspace delete    Esc clear    Ctrl+C quit\n"
 }
 
 func (b *browserState) renderCommitHistoryContent() string {
@@ -675,7 +763,7 @@ func (b *browserState) renderCommitHistoryContent() string {
 		return sb.String()
 	}
 	b.ensureCommitVisible()
-	availableRows := b.availableRows()
+	availableRows := b.historyBodyRows()
 	start := b.historyOffset
 	end := start + availableRows
 	if end > len(b.history) {
@@ -752,6 +840,18 @@ func (b *browserState) run(read func() (keyAction, string, bool)) {
 			return
 		}
 		if b.filtering && b.page == BrowseList {
+			// Filter editing is a genuine text-entry state: printable input
+			// extends the query, including characters that are bound to
+			// actions outside editing ("q", "/", "H", "L"). Structural keys
+			// keep their meaning — Backspace edits, Enter accepts, Esc
+			// clears — and navigation/scrolling keys are ignored so
+			// selection cannot move accidentally. Ctrl+C still quits: it is
+			// not printable, so it never becomes query text.
+			if isFilterChar(raw) {
+				b.appendFilterChar(raw)
+				b.render()
+				continue
+			}
 			switch action {
 			case keyQuit:
 				return
@@ -764,15 +864,6 @@ func (b *browserState) run(read func() (keyAction, string, bool)) {
 			case keyBackspace:
 				b.backspaceFilter()
 				b.render()
-			default:
-				// Printable characters extend the query; navigation and
-				// scrolling keys are ignored while editing so selection
-				// cannot move accidentally. "q" maps to keyQuit above and
-				// therefore quits rather than typing.
-				if isFilterChar(raw) {
-					b.appendFilterChar(raw)
-					b.render()
-				}
 			}
 			continue
 		}
@@ -904,10 +995,11 @@ func isCharDevice(f *os.File) bool {
 
 // Browse opens the interactive investigation surface over the already
 // discovered, enriched, sorted, and filtered repository set, entered via
-// `keen -i`. The hierarchy is List → Detail → Activity: Enter advances to a
-// child surface, ←/Esc return to the parent, and q/Ctrl+C quit from any level.
-// List is an addressable index; Detail shows one repository's full state;
-// Activity is contextual to the selected repository.
+// `keen -i`. The hierarchy is List → Detail → History → Commit → Files:
+// Enter advances to a child surface, ←/Esc return to the parent, and
+// q/Ctrl+C quit from any level. List is an addressable index; Detail shows
+// one repository's full state; History, Commit, and Files investigate the
+// selected repository's recent commits.
 //
 // Terminal handling uses the standard library only (no added dependencies).
 // When stdin is not a terminal, Browse degrades to a single static List render
@@ -986,13 +1078,14 @@ func sliceViewport(s string, offset, width int) string {
 }
 
 // renderBannerAndHeader emits the shared screen chrome: the breadcrumb line
-// carrying the view hierarchy, followed by a blank separator. It is the
-// single canonical source for this chrome so every page renders an identical
-// header. The former global "n / 5" step counter was removed in v0.9.2: the
-// five surfaces form a selection-dependent hierarchy, not a linear wizard,
-// so the counter added noise without orientation value. The semantic
-// breadcrumb alone answers "where am I". Width is retained for future
-// truncation budgets; over-wide titles are never padded into collisions.
+// carrying the view hierarchy with the current surface's position ("n / 5")
+// right-aligned, followed by a blank separator. It is the single canonical
+// source for this chrome so every page renders an identical header. The
+// title keeps its cell-aware truncation budget minus the indicator width, so
+// the indicator never wraps the header onto a second line; over-wide titles
+// truncate at a cell boundary instead of colliding. Repository identity in
+// the header is orientation, not the canonical record: the full path remains
+// on Detail.
 func renderBannerAndHeader(page BrowsePage, repoName string, width int) string {
 	var sb strings.Builder
 	var title string
@@ -1001,30 +1094,57 @@ func renderBannerAndHeader(page BrowsePage, repoName string, width int) string {
 	} else {
 		title = fmt.Sprintf("KEEN › %s › %s", repoName, page.label())
 	}
-	// Over-wide titles truncate at a cell boundary instead of colliding.
-	// Repository identity in the header is orientation, not the canonical
-	// record: the full path remains on Detail.
-	if width > 0 && stringCellWidth(title) > width {
-		title = truncateCells(title, width)
+	indicator := fmt.Sprintf("%d / %d", int(page)+1, browsePageCount)
+	if width > 0 {
+		budget := width - stringCellWidth(indicator) - 1
+		if budget < 1 {
+			budget = 1
+		}
+		if stringCellWidth(title) > budget {
+			title = truncateCells(title, budget)
+		}
+	}
+	pad := width - stringCellWidth(title) - stringCellWidth(indicator)
+	if pad < 0 {
+		pad = 0
 	}
 	sb.WriteString(title)
+	sb.WriteString(strings.Repeat(" ", pad))
+	sb.WriteString(indicator)
 	sb.WriteString("\n\n")
 	return sb.String()
 }
 
+// renderFooter is the single source for the contextual keymap footer. Each
+// page advertises exactly the actions its event handling supports, using the
+// target-surface name for Enter ("Enter detail/commit/files/history") so the
+// footer always says what the key will do. Bindings follow one canonical
+// order — Enter, ↑/↓, /, ←/Esc, quit — and every page's footer is a
+// subsequence of it: Enter leads wherever it acts, quit always closes, and a
+// missing entry (e.g. no Enter on Files) means the action is a no-op there
+// rather than a reordering.
+//
+//   - ↑/↓ appear wherever they act: selection on List/History, scrolling on
+//     Detail/Commit/Files.
+//   - H/L horizontal scrolling is intentionally undisclosed to keep the footer
+//     within a narrow-terminal width budget; it is documented in
+//     docs/interactive.md instead of consuming permanent footer space.
+//
+// Every render path ends with this footer, so the interactive renderer can
+// rely on it occupying the final content line.
 func renderFooter(page BrowsePage) string {
 	var hint string
 	switch page {
 	case BrowseList:
-		hint = "↑/↓ select    / filter    Enter inspect    q quit"
+		hint = "Enter detail    ↑/↓ select    / filter    q quit"
 	case BrowseDetail:
-		hint = "Enter history    ←/Esc back    q quit"
+		hint = "Enter history    ↑/↓ scroll    ←/Esc back    q quit"
 	case BrowseCommitHistory:
-		hint = "↑/↓ select    Enter commit    ←/Esc back    q quit"
+		hint = "Enter commit    ↑/↓ select    ←/Esc back    q quit"
 	case BrowseCommitDetail:
-		hint = "Enter files    ←/Esc back    q quit"
+		hint = "Enter files    ↑/↓ scroll    ←/Esc back    q quit"
 	case BrowseChangedFiles:
-		hint = "←/Esc back    q quit"
+		hint = "↑/↓ scroll    ←/Esc back    q quit"
 	}
 	return reportIndent + hint + "\n"
 }
