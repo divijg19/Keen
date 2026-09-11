@@ -5,6 +5,12 @@ Keen is a quiet, read-only workspace-orientation and repository-investigation CL
 ## Installation
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/divijg19/Keen/main/install.sh | bash
+```
+
+Or install a specific version with Go:
+
+```bash
 go install github.com/divijg19/Keen/cmd/keen@latest
 ```
 
