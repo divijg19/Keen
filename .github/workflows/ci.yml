@@ -1,23 +1,37 @@
 name: CI
 
+# Quality gates plus a cross-platform check. The test job mirrors the local
+# certification gates (gofmt, vet, staticcheck, golangci-lint, tests with
+# and without -race, binary smoke) so a green run means the tree is
+# releasable. The vet job type-checks every supported target because Keen
+# ships platform-specific terminal code (term_unix.go on Linux,
+# term_other.go elsewhere) that the test runner never compiles; vet
+# compiles each target as part of analysis, so no separate build step is
+# needed. Linking stays covered by the test job's real binary build.
 on:
   push:
-    branches: [ "*" ]
   pull_request:
-    branches: [ "*" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: Build, Test & Verify
+    name: Gates, tests & smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.26'
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Check out code
-        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
 
       - name: Check formatting
         run: |
@@ -49,8 +63,38 @@ jobs:
       - name: Run tests with race detector
         run: go test -count=1 -race ./...
 
-      - name: Build project
-        run: go build ./...
+      - name: Build binary
+        run: go build -trimpath -o /tmp/keen ./cmd/keen
+
+      - name: Smoke-test binary
+        run: |
+          /tmp/keen -version
+          /tmp/keen --help >/dev/null
 
       - name: Check diff hygiene
         run: git diff --check
+
+  vet:
+    name: Vet ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [ linux, darwin, windows ]
+        goarch: [ amd64, arm64 ]
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Vet all packages
+        run: go vet ./...
