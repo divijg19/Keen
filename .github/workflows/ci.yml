@@ -71,6 +71,9 @@ jobs:
           /tmp/keen -version
           /tmp/keen --help >/dev/null
 
+      - name: Smoke-test installer help
+        run: bash install.sh --help >/dev/null
+
       - name: Check diff hygiene
         run: git diff --check
 
