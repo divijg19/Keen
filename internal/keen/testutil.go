@@ -15,9 +15,20 @@ func initTestGitRepo(t *testing.T, dir string) {
 	runGitCommand(t, dir, "config", "user.name", "Keen Test")
 }
 
+// requireGit skips the test when the git binary is unavailable. Git-backed
+// fixtures cannot run without it; skipping keeps the suite green on minimal
+// systems while CI always exercises these paths.
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+}
+
 // runGitCommand executes a git command in dir, failing the test on error.
 func runGitCommand(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	requireGit(t)
 	cmdArgs := append([]string{"-C", dir}, args...)
 	cmd := exec.Command("git", cmdArgs...)
 	if err := cmd.Run(); err != nil {
@@ -28,6 +39,7 @@ func runGitCommand(t *testing.T, dir string, args ...string) {
 // runGitOutput executes a git command in dir and returns stdout, failing on error.
 func runGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	requireGit(t)
 	cmdArgs := append([]string{"-C", dir}, args...)
 	cmd := exec.Command("git", cmdArgs...)
 	output, err := cmd.Output()

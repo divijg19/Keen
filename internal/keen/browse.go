@@ -156,25 +156,24 @@ const browseChromeRows = 5
 // session. It deliberately models distinct values for selection, vertical
 // viewport, and horizontal viewport.
 type browserState struct {
-	allRepos           []Repository
-	repos              []Repository
-	total              int
-	page               BrowsePage
-	selected           int // index of selected repo; -1 if none
-	listOffset         int // vertical viewport offset
-	offset             int // horizontal viewport offset
-	viewport           int // terminal width
-	viewportHeight     int // terminal height
-	history            []Commit
-	selectedCommit     int // index of selected commit; -1 if none
-	historyOffset      int // vertical viewport offset for commit history
-	changedFiles       []ChangedFile
-	changedFilesOffset int
-	detailOffset       int // vertical viewport offset for Detail/Commit/Files content
-	historyErr         string
-	changedFilesErr    string
-	filtering          bool
-	filterQuery        string
+	allRepos        []Repository
+	repos           []Repository
+	total           int
+	page            BrowsePage
+	selected        int // index of selected repo; -1 if none
+	listOffset      int // vertical viewport offset
+	offset          int // horizontal viewport offset
+	viewport        int // terminal width
+	viewportHeight  int // terminal height
+	history         []Commit
+	selectedCommit  int // index of selected commit; -1 if none
+	historyOffset   int // vertical viewport offset for commit history
+	changedFiles    []ChangedFile
+	detailOffset    int // vertical viewport offset for Detail/Commit/Files content
+	historyErr      string
+	changedFilesErr string
+	filtering       bool
+	filterQuery     string
 }
 
 func newBrowserState(repos []Repository, total int) *browserState {
@@ -227,18 +226,56 @@ func (b *browserState) applyFilter() {
 	b.ensureVisible()
 }
 
+// clampIndex keeps a selection address valid for a list of n items: an
+// empty list selects nothing (-1), otherwise the index is pinned into
+// [0, n). It is the single rule behind repository and commit selection.
+func clampIndex(selected, n int) int {
+	if n == 0 {
+		return -1
+	}
+	if selected < 0 {
+		return 0
+	}
+	if selected >= n {
+		return n - 1
+	}
+	return selected
+}
+
+// windowOffset keeps offset a valid window origin showing selected within a
+// rows-tall window over n items: the window follows the selection first,
+// then the origin is pinned into [0, max(0, n-rows)]. It is the single rule
+// behind list and history viewport tracking.
+func windowOffset(selected, offset, n, rows int) int {
+	if rows <= 0 {
+		rows = 1
+	}
+	if selected < offset {
+		offset = selected
+	}
+	if selected >= offset+rows {
+		offset = selected - rows + 1
+	}
+	maxOffset := n - rows
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	return offset
+}
+
 func (b *browserState) clampSelection() {
 	if len(b.repos) == 0 {
 		b.selected = -1
 		b.listOffset = 0
 		return
 	}
-	if b.selected < 0 {
-		b.selected = 0
-	}
-	if b.selected >= len(b.repos) {
-		b.selected = len(b.repos) - 1
-	}
+	b.selected = clampIndex(b.selected, len(b.repos))
 }
 
 func (b *browserState) moveSelection(delta int) {
@@ -255,28 +292,7 @@ func (b *browserState) ensureVisible() {
 		b.listOffset = 0
 		return
 	}
-	availableRows := b.listBodyRows()
-	if availableRows <= 0 {
-		availableRows = 1
-	}
-	// Ensure selected is within visible window.
-	if b.selected < b.listOffset {
-		b.listOffset = b.selected
-	}
-	if b.selected >= b.listOffset+availableRows {
-		b.listOffset = b.selected - availableRows + 1
-	}
-	// Clamp listOffset to valid range.
-	maxOffset := len(b.repos) - availableRows
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if b.listOffset < 0 {
-		b.listOffset = 0
-	}
-	if b.listOffset > maxOffset {
-		b.listOffset = maxOffset
-	}
+	b.listOffset = windowOffset(b.selected, b.listOffset, len(b.repos), b.listBodyRows())
 }
 
 func (b *browserState) availableRows() int {
@@ -291,6 +307,18 @@ func (b *browserState) availableRows() int {
 	return avail
 }
 
+// bodyRows reserves the shared chrome budget plus extra fixed preamble rows
+// (page lines beyond the header and footer) from the terminal height,
+// floored so at least one body row always renders. The single floor keeps
+// every surface's window consistent.
+func (b *browserState) bodyRows(extraChrome int) int {
+	rows := b.availableRows() - extraChrome
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
 // listBodyRows is the selectable-row budget for the List surface. When the
 // filter query line is displayed it consumes two fixed rows ("filter:
 // <query>" plus its blank separator) beyond the shared chrome budget, so the
@@ -298,14 +326,11 @@ func (b *browserState) availableRows() int {
 // Keeping this budget identical between ensureVisible and renderListContent
 // guarantees the selected row is always inside the rendered window.
 func (b *browserState) listBodyRows() int {
-	rows := b.availableRows()
+	extra := 0
 	if b.filterQuery != "" {
-		rows -= 2
+		extra = 2
 	}
-	if rows < 1 {
-		rows = 1
-	}
-	return rows
+	return b.bodyRows(extra)
 }
 
 // historyBodyRows is the selectable-row budget for the History surface. The
@@ -313,11 +338,7 @@ func (b *browserState) listBodyRows() int {
 // the shared chrome budget. Shared with ensureCommitVisible and
 // renderCommitHistoryContent so the selected commit is always rendered.
 func (b *browserState) historyBodyRows() int {
-	rows := b.availableRows() - 2
-	if rows < 1 {
-		rows = 1
-	}
-	return rows
+	return b.bodyRows(2)
 }
 
 func (b *browserState) clampCommitSelection() {
@@ -326,12 +347,7 @@ func (b *browserState) clampCommitSelection() {
 		b.historyOffset = 0
 		return
 	}
-	if b.selectedCommit < 0 {
-		b.selectedCommit = 0
-	}
-	if b.selectedCommit >= len(b.history) {
-		b.selectedCommit = len(b.history) - 1
-	}
+	b.selectedCommit = clampIndex(b.selectedCommit, len(b.history))
 }
 
 func (b *browserState) moveCommitSelection(delta int) {
@@ -348,26 +364,7 @@ func (b *browserState) ensureCommitVisible() {
 		b.historyOffset = 0
 		return
 	}
-	availableRows := b.historyBodyRows()
-	if availableRows <= 0 {
-		availableRows = 1
-	}
-	if b.selectedCommit < b.historyOffset {
-		b.historyOffset = b.selectedCommit
-	}
-	if b.selectedCommit >= b.historyOffset+availableRows {
-		b.historyOffset = b.selectedCommit - availableRows + 1
-	}
-	maxOffset := len(b.history) - availableRows
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if b.historyOffset < 0 {
-		b.historyOffset = 0
-	}
-	if b.historyOffset > maxOffset {
-		b.historyOffset = maxOffset
-	}
+	b.historyOffset = windowOffset(b.selectedCommit, b.historyOffset, len(b.history), b.historyBodyRows())
 }
 
 func (b *browserState) selectedCommitObj() *Commit {
@@ -435,14 +432,19 @@ func (b *browserState) scrollDetail(delta int) {
 	}
 }
 
+// clearChangedFiles drops the per-commit file state; called whenever the
+// selected repository or commit changes.
+func (b *browserState) clearChangedFiles() {
+	b.changedFiles = nil
+	b.changedFilesErr = ""
+}
+
 func (b *browserState) loadHistoryForSelected() {
 	b.history = nil
 	b.selectedCommit = -1
 	b.historyOffset = 0
 	b.historyErr = ""
-	b.changedFiles = nil
-	b.changedFilesOffset = 0
-	b.changedFilesErr = ""
+	b.clearChangedFiles()
 	repo := b.selectedRepo()
 	if repo == nil {
 		return
@@ -461,9 +463,7 @@ func (b *browserState) loadHistoryForSelected() {
 }
 
 func (b *browserState) loadChangedFilesForSelectedCommit() {
-	b.changedFiles = nil
-	b.changedFilesOffset = 0
-	b.changedFilesErr = ""
+	b.clearChangedFiles()
 	repo := b.selectedRepo()
 	commit := b.selectedCommitObj()
 	if repo == nil || commit == nil {
@@ -559,10 +559,7 @@ func (b *browserState) render() {
 		full = b.renderListContent()
 	case BrowseDetail:
 		if repo := b.selectedRepo(); repo != nil {
-			header := b.renderHeader()
-			content := b.boundedDetailContent(renderDetail(*repo))
-			footer := renderFooter(b.page)
-			full = header + content + "\n" + footer
+			full = b.renderDetailPage(renderDetail(*repo))
 		} else {
 			full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 		}
@@ -571,10 +568,7 @@ func (b *browserState) render() {
 	case BrowseCommitDetail:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				header := b.renderHeader()
-				content := b.boundedDetailContent(renderCommitDetail(*repo, *c))
-				footer := renderFooter(b.page)
-				full = header + content + "\n" + footer
+				full = b.renderDetailPage(renderCommitDetail(*repo, *c))
 			} else {
 				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 			}
@@ -584,10 +578,7 @@ func (b *browserState) render() {
 	case BrowseChangedFiles:
 		if c := b.selectedCommitObj(); c != nil {
 			if repo := b.selectedRepo(); repo != nil {
-				header := b.renderHeader()
-				content := b.boundedDetailContent(renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr))
-				footer := renderFooter(b.page)
-				full = header + content + "\n" + footer
+				full = b.renderDetailPage(renderChangedFilesForCommit(*repo, *c, b.changedFiles, b.changedFilesErr))
 			} else {
 				full = renderBrowse(b.repos, b.total, b.page, b.viewport)
 			}
@@ -673,6 +664,23 @@ func (b *browserState) renderHeader() string {
 		repoName = r.Name
 	}
 	return renderBannerAndHeader(b.page, repoName, b.viewport)
+}
+
+// renderDetailPage assembles a detail-family page (Detail, Commit Detail,
+// Changed Files): shared header, viewport-bounded body, and footer. The body
+// is windowed so long content never displaces the footer.
+func (b *browserState) renderDetailPage(body string) string {
+	return b.renderHeader() + b.boundedDetailContent(body) + "\n" + renderFooter(b.page)
+}
+
+// transition moves to the given page, resetting both viewports so every
+// surface starts at its origin, and repaints. All forward and back
+// navigation shares this reset; page-specific loading happens before it.
+func (b *browserState) transition(page BrowsePage) {
+	b.page = page
+	b.offset = 0
+	b.detailOffset = 0
+	b.render()
 }
 
 // renderListContent renders the List surface, prefixed by the shared
@@ -896,53 +904,29 @@ func (b *browserState) run(read func() (keyAction, string, bool)) {
 			switch b.page {
 			case BrowseList:
 				if b.selected >= 0 {
-					b.page = BrowseDetail
-					b.offset = 0
-					b.detailOffset = 0
-					b.render()
+					b.transition(BrowseDetail)
 				}
 			case BrowseDetail:
 				b.loadHistoryForSelected()
-				b.page = BrowseCommitHistory
-				b.offset = 0
-				b.detailOffset = 0
-				b.render()
+				b.transition(BrowseCommitHistory)
 			case BrowseCommitHistory:
 				if b.selectedCommit >= 0 && b.selectedCommit < len(b.history) {
-					b.page = BrowseCommitDetail
-					b.offset = 0
-					b.detailOffset = 0
-					b.render()
+					b.transition(BrowseCommitDetail)
 				}
 			case BrowseCommitDetail:
 				b.loadChangedFilesForSelectedCommit()
-				b.page = BrowseChangedFiles
-				b.offset = 0
-				b.detailOffset = 0
-				b.render()
+				b.transition(BrowseChangedFiles)
 			}
 		case keyLeft, keyEsc:
 			switch b.page {
 			case BrowseDetail:
-				b.page = BrowseList
-				b.offset = 0
-				b.detailOffset = 0
-				b.render()
+				b.transition(BrowseList)
 			case BrowseCommitHistory:
-				b.page = BrowseDetail
-				b.offset = 0
-				b.detailOffset = 0
-				b.render()
+				b.transition(BrowseDetail)
 			case BrowseCommitDetail:
-				b.page = BrowseCommitHistory
-				b.offset = 0
-				b.detailOffset = 0
-				b.render()
+				b.transition(BrowseCommitHistory)
 			case BrowseChangedFiles:
-				b.page = BrowseCommitDetail
-				b.offset = 0
-				b.detailOffset = 0
-				b.render()
+				b.transition(BrowseCommitDetail)
 			case BrowseList:
 				// Left/Esc are not bound from the list; q or Ctrl+C quit.
 			}
@@ -1019,9 +1003,12 @@ func Browse(repos []Repository, totalDiscovered int) {
 	}
 	defer restoreRaw(fd)
 
-	// Minimal signal protection for raw terminal: restore on SIGTERM/SIGHUP.
+	// Minimal signal protection for raw terminal: restore on TERM/HUP/INT/QUIT.
+	// Keyboard Ctrl-C never arrives as SIGINT (makeRaw clears ISIG, so it
+	// reads as a 0x03 byte handled by the event loop); these handlers cover
+	// only externally delivered signals that would otherwise leave raw mode.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
 	go func() {
 		<-sigCh
 		restoreRaw(fd)
@@ -1244,8 +1231,8 @@ func renderDetail(repo Repository) string {
 	sb.WriteString(reportIndent + "Branch:     " + branch + "\n")
 	upstream := upstreamLabel(repo)
 	sb.WriteString(reportIndent + "Upstream:   " + upstream + "\n")
-	// Ahead/Behind honest handling.
-	ahead, behind := "–", "–"
+	// Ahead/Behind honest handling: unavailable without an upstream.
+	ahead, behind := noSyncMark, noSyncMark
 	if repo.Upstream != "" {
 		ahead = fmt.Sprintf("%d", repo.Ahead)
 		behind = fmt.Sprintf("%d", repo.Behind)
@@ -1298,19 +1285,4 @@ func emptyMessage(totalDiscovered int) string {
 		return "No repositories found."
 	}
 	return "No repositories match the selected filters."
-}
-
-// truncate shortens s to at most max runes, appending an ellipsis when the
-// content is longer. It is rune-aware so multi-byte characters are never
-// split mid-codepoint. Used by the static rich report; the interactive
-// investigation surface relies on the horizontal viewport instead.
-func truncate(s string, max int) string {
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	if max <= 1 {
-		return string(r[:max])
-	}
-	return string(r[:max-1]) + "…"
 }

@@ -78,38 +78,58 @@ func parseArgs(args []string) (keen.Options, error) {
 }
 
 func main() {
+	os.Exit(run(os.Args[1:]))
+}
+
+// run executes the full CLI pipeline and reports the process exit status.
+// All I/O stays on the standard streams; only the status is returned, so
+// fatal failures (bad invocation, failed discovery) are unit-testable
+// without redirecting output.
+func run(args []string) int {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invocation or runtime failed: %v\n", err)
-		return
+		return 1
 	}
+	return execute(workingDir, args)
+}
 
-	opts, err := parseArgs(os.Args[1:])
+// execute runs the pipeline rooted at workingDir. Repositories that fail
+// required enrichment are excluded from the report (keeping the stderr
+// diagnostic) rather than presented as plausible-but-incomplete rows: only
+// successfully enriched repositories reach sorting and presentation, so
+// counts and summaries always describe exactly the reported set.
+func execute(workingDir string, args []string) int {
+	opts, err := parseArgs(args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			os.Exit(0)
+			return 0
 		}
 		// Flag parse errors already printed usage to stdout; custom validation
 		// errors were printed to stderr above. Either way, exit non-zero.
-		os.Exit(1)
+		return 1
 	}
 
 	if opts.PrintVersion {
 		fmt.Println(versionLine())
-		return
+		return 0
 	}
 
 	repositories, err := keen.Discover(workingDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Filesystem traversal failed: %v\n", err)
-		return
+		return 1
 	}
 
+	enriched := make([]keen.Repository, 0, len(repositories))
 	for i := range repositories {
 		if err := keen.Enrich(&repositories[i]); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to inspect %s: %v\n", repositories[i].Path, err)
+			continue
 		}
+		enriched = append(enriched, repositories[i])
 	}
+	repositories = enriched
 
 	keen.Sort(repositories)
 	filtered := keen.Filter(repositories, opts)
@@ -119,14 +139,14 @@ func main() {
 
 	if opts.Interactive {
 		keen.Browse(presented, len(repositories))
-		return
+		return 0
 	}
 
 	fmt.Println("===KEEN===")
 
 	if opts.Rich {
 		keen.PrintRich(presented, len(repositories))
-		return
+		return 0
 	}
 
 	mode := keen.OutputGrouped
@@ -134,4 +154,5 @@ func main() {
 		mode = keen.OutputCompact
 	}
 	keen.Print(presented, mode, len(repositories))
+	return 0
 }

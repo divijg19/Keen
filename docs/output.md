@@ -20,8 +20,8 @@ Columnar aligned report presenting the same information semantics as interactive
 - **Explicit Width Tiers** (terminal widths, four-space indent included):
   - **Wide (≥95)**: `NAME | BRANCH | UPSTREAM | AHEAD | BEHIND | HASH | SUBJECT | TIME`, proportionally allocated.
   - **Tight (68–94)**: Same eight columns on tightened floors.
-  - **Seven-column (61–67)**: `TIME` dropped; `SUBJECT` kept on a 12-cell floor.
-  - **Six-column (50–60)**: `TIME` and `SUBJECT` dropped; identity, branch, upstream, sync, and hash remain.
+  - **Seven-column (55–67)**: `TIME` dropped; `SUBJECT` kept on a 12-cell floor.
+  - **Six-column (50–54)**: `TIME` and `SUBJECT` dropped; identity, branch, upstream, sync, and hash remain.
   - **Fallback (<50)**: Automatic silent degradation to the byte-identical canonical grouped output.
 - `AHEAD`/`BEHIND` drop atomically, never half a divergence fact. `NAME` is never dropped. `SUBJECT` needs at least 12 cells to be useful, so narrower budgets drop it instead of squeezing a fragment.
 - Tested across explicit terminal widths (40 to 200) at behavioral boundaries.
