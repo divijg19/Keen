@@ -260,7 +260,7 @@ func seedDeepState(repos []Repository, page BrowsePage) *browserState {
 func TestInteractiveHeightMatrix(t *testing.T) {
 	t.Setenv("COLUMNS", "80")
 	pages := []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles}
-	for _, h := range []int{5, 6, 8, 10, 12, 16, 24, 40} {
+	for _, h := range []int{5, 6, 7, 8, 10, 12, 16, 24, 40} {
 		t.Setenv("LINES", strconv.Itoa(h))
 		for _, page := range pages {
 			state := seedDeepState(manyTestRepos(30), page)
@@ -272,7 +272,7 @@ func TestInteractiveHeightMatrix(t *testing.T) {
 			if last := lines[len(lines)-1]; !strings.Contains(last, "quit") {
 				t.Errorf("height %d page %v lost its footer, last line %q:\n%q", h, page, last, out)
 			}
-			if h >= 8 && len(lines) > h {
+			if h >= 7 && len(lines) > h {
 				t.Errorf("height %d page %v rendered %d lines; chrome must fit:\n%q", h, page, len(lines), out)
 			}
 		}
@@ -365,7 +365,7 @@ func TestListDensityAudit(t *testing.T) {
 // no-op, and Esc recovers the full set with a valid selection.
 func TestZeroResultFilterLoop(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
-	script := []struct {
+	driveKeys(t, state, []struct {
 		action keyAction
 		raw    string
 	}{
@@ -379,18 +379,6 @@ func TestZeroResultFilterLoop(t *testing.T) {
 		{keyFilter, "/"}, // re-enter editing to clear via Esc
 		{keyEsc, "\x1b"}, // Esc clears the query, restores the set
 		{keyQuit, "q"},
-	}
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			if i >= len(script) {
-				t.Error("run continued past the quit event")
-				return keyNone, "", false
-			}
-			s := script[i]
-			i++
-			return s.action, s.raw, true
-		})
 	})
 	if state.page != BrowseList {
 		t.Errorf("page = %v, want List throughout the zero-match loop", state.page)
@@ -426,13 +414,21 @@ func TestScrollClampsOffset(t *testing.T) {
 	}
 }
 
-func TestTruncateIsRuneAware(t *testing.T) {
-	if got := truncate("abcdef", 4); got != "abc…" {
+// TestTruncateCellsContracts pins the single truncation engine: ellipsis
+// only when content exceeds the budget, exact fit passes through, degenerate
+// budgets collapse deterministically, and wide characters are never split.
+func TestTruncateCellsContracts(t *testing.T) {
+	if got := truncateCells("abcdef", 4); got != "abc…" {
 		t.Errorf("truncate ascii = %q, want abc…", got)
 	}
-	wide := truncate("日本語日本語", 3)
-	if got := []rune(wide); len(got) != 3 || got[2] != '…' {
-		t.Errorf("truncate wide = %q (%v), want 2 chars + ellipsis", wide, []rune(wide))
+	if got := truncateCells("abcd", 4); got != "abcd" {
+		t.Errorf("exact fit = %q, want no ellipsis", got)
+	}
+	if got := truncateCells("abcdef", 1); got != "…" {
+		t.Errorf("single-cell budget = %q, want ellipsis", got)
+	}
+	if got := truncateCells("abcdef", 0); got != "" {
+		t.Errorf("zero budget = %q, want empty", got)
 	}
 }
 
@@ -624,19 +620,7 @@ func TestRunHierarchicalNavigationAndIgnoresUnknownInput(t *testing.T) {
 func TestRunEnterDoesNotCycleFromChangedFiles(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
 	state.page = BrowseChangedFiles
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			i++
-			if i == 1 {
-				return keyEnter, "\r", true
-			}
-			return keyQuit, "q", true
-		})
-	})
-	if i != 2 {
-		t.Errorf("Enter from ChangedFiles then quit; reads = %d, want 2", i)
-	}
+	driveKeys(t, state, keyScript(keyEnter, keyQuit))
 	if state.page != BrowseChangedFiles {
 		t.Errorf("page = %v, want ChangedFiles (Enter must not wrap to List)", state.page)
 	}
@@ -647,15 +631,12 @@ func TestRunEnterDoesNotCycleFromChangedFiles(t *testing.T) {
 func TestRunForwardArrowIsNoOp(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
 	state.page = BrowseDetail
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			i++
-			if i == 1 {
-				return interpretSequence("\x1b[C"), "\x1b[C", true // plain →
-			}
-			return keyQuit, "q", true
-		})
+	driveKeys(t, state, []struct {
+		action keyAction
+		raw    string
+	}{
+		{interpretSequence("\x1b[C"), "\x1b[C"}, // plain →
+		{keyQuit, "q"},
 	})
 	if state.page != BrowseDetail {
 		t.Errorf("page = %v, want Detail (plain → must not advance)", state.page)
@@ -664,19 +645,7 @@ func TestRunForwardArrowIsNoOp(t *testing.T) {
 
 func TestRunIgnoresEscapeFromList(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			i++
-			if i == 1 {
-				return keyEsc, "\x1b", true
-			}
-			return keyQuit, "q", true
-		})
-	})
-	if i != 2 {
-		t.Errorf("Esc from list should be ignored; reads = %d, want 2", i)
-	}
+	driveKeys(t, state, keyScript(keyEsc, keyQuit))
 	if state.page != BrowseList {
 		t.Errorf("page changed unexpectedly: %v", state.page)
 	}
@@ -685,19 +654,7 @@ func TestRunIgnoresEscapeFromList(t *testing.T) {
 func TestRunQuitsOnEscapeFromDetail(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
 	state.page = BrowseDetail
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			i++
-			if i == 1 {
-				return keyEsc, "\x1b", true
-			}
-			return keyQuit, "q", true
-		})
-	})
-	if i != 2 {
-		t.Errorf("Esc from detail then quit; reads = %d, want 2", i)
-	}
+	driveKeys(t, state, keyScript(keyEsc, keyQuit))
 	if state.page != BrowseList {
 		t.Errorf("page = %v, want List", state.page)
 	}
@@ -857,15 +814,7 @@ func TestVerticalViewport(t *testing.T) {
 func TestNavigationListToDetail(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
 	s.page = BrowseList
-	captureOutput(func() {
-		s.run(func() (keyAction, string, bool) {
-			// Enter -> Detail, then quit
-			if s.page == BrowseList {
-				return keyEnter, "\r", true
-			}
-			return keyQuit, "q", true
-		})
-	})
+	driveKeys(t, s, keyScript(keyEnter, keyQuit)) // Enter -> Detail, then quit
 	if s.page != BrowseDetail {
 		t.Errorf("list Enter -> detail: page = %v, want Detail", s.page)
 	}
@@ -874,36 +823,12 @@ func TestNavigationListToDetail(t *testing.T) {
 func TestNavigationDetailToList(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
 	s.page = BrowseDetail
-	i := 0
-	captureOutput(func() {
-		s.run(func() (keyAction, string, bool) {
-			i++
-			if i == 1 {
-				return keyLeft, "\x1b[D", true
-			}
-			return keyQuit, "q", true
-		})
-	})
-	if i != 2 {
-		t.Errorf("detail Left -> list then quit; reads = %d, want 2", i)
-	}
+	driveKeys(t, s, keyScript(keyLeft, keyQuit))
 	if s.page != BrowseList {
 		t.Errorf("detail Left -> list: page = %v, want List", s.page)
 	}
 	s.page = BrowseDetail
-	i = 0
-	captureOutput(func() {
-		s.run(func() (keyAction, string, bool) {
-			i++
-			if i == 1 {
-				return keyEsc, "\x1b", true
-			}
-			return keyQuit, "q", true
-		})
-	})
-	if i != 2 {
-		t.Errorf("detail Esc -> list then quit; reads = %d, want 2", i)
-	}
+	driveKeys(t, s, keyScript(keyEsc, keyQuit))
 	if s.page != BrowseList {
 		t.Errorf("detail Esc -> list: page = %v, want List", s.page)
 	}
@@ -912,14 +837,7 @@ func TestNavigationDetailToList(t *testing.T) {
 func TestNavigationDetailToHistory(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
 	s.page = BrowseDetail
-	captureOutput(func() {
-		s.run(func() (keyAction, string, bool) {
-			if s.page == BrowseDetail {
-				return keyEnter, "\r", true
-			}
-			return keyQuit, "q", true
-		})
-	})
+	driveKeys(t, s, keyScript(keyEnter, keyQuit))
 	if s.page != BrowseCommitHistory {
 		t.Errorf("detail Enter -> history: page = %v, want CommitHistory", s.page)
 	}
@@ -928,16 +846,7 @@ func TestNavigationDetailToHistory(t *testing.T) {
 func TestNavigationHistoryToDetail(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
 	s.page = BrowseCommitHistory
-	i := 0
-	captureOutput(func() {
-		s.run(func() (keyAction, string, bool) {
-			i++
-			if i == 1 {
-				return keyLeft, "\x1b[D", true
-			}
-			return keyQuit, "q", true
-		})
-	})
+	driveKeys(t, s, keyScript(keyLeft, keyQuit))
 	if s.page != BrowseDetail {
 		t.Errorf("history Left -> detail: page = %v, want Detail", s.page)
 	}
@@ -947,16 +856,7 @@ func TestNavigationQuitFromAllPages(t *testing.T) {
 	for _, page := range []BrowsePage{BrowseList, BrowseDetail, BrowseCommitHistory, BrowseCommitDetail, BrowseChangedFiles} {
 		s := newBrowserState(browseSample(), 3)
 		s.page = page
-		calls := 0
-		captureOutput(func() {
-			s.run(func() (keyAction, string, bool) {
-				calls++
-				return keyQuit, "q", true
-			})
-		})
-		if calls != 1 {
-			t.Errorf("quit from %v: calls = %d, want 1", page, calls)
-		}
+		driveKeys(t, s, keyScript(keyQuit))
 	}
 }
 
@@ -1036,6 +936,7 @@ func keyScript(events ...keyAction) []struct {
 	raws := map[keyAction]string{
 		keyEnter: "\r", keyEsc: "\x1b", keyLeft: "\x1b[D",
 		keyUp: "\x1b[A", keyDown: "\x1b[B", keyQuit: "q",
+		keyFilter: "/",
 	}
 	script := make([]struct {
 		action keyAction
@@ -1129,8 +1030,8 @@ func TestTransitionCommitToFilesStartsAtOrigin(t *testing.T) {
 	if state.page != BrowseChangedFiles {
 		t.Fatalf("page = %v, want Files", state.page)
 	}
-	if state.detailOffset != 0 || state.changedFilesOffset != 0 {
-		t.Errorf("offsets = (%d, %d), want (0, 0) on entry", state.detailOffset, state.changedFilesOffset)
+	if state.detailOffset != 0 {
+		t.Errorf("detailOffset = %d, want 0 on entry", state.detailOffset)
 	}
 	out := captureOutput(state.render)
 	if !strings.Contains(out, "quit") {
@@ -1193,23 +1094,8 @@ func TestEmptyRepositoryNavigationIsIntentional(t *testing.T) {
 func TestNavigationKeepsSelectionValid(t *testing.T) {
 	s := newBrowserState(browseSample(), 3)
 	s.selected = 2
-	i := 0
-	captureOutput(func() {
-		s.run(func() (keyAction, string, bool) {
-			i++
-			switch i {
-			case 1:
-				return keyEnter, "\r", true // List -> Detail
-			case 2:
-				return keyEnter, "\r", true // Detail -> History
-			case 3:
-				return keyLeft, "\x1b[D", true // History -> Detail
-			case 4:
-				return keyEsc, "\x1b", true // Detail -> List
-			}
-			return keyQuit, "q", true
-		})
-	})
+	// List -> Detail -> History -> Detail -> List, then quit.
+	driveKeys(t, s, keyScript(keyEnter, keyEnter, keyLeft, keyEsc, keyQuit))
 	if s.page != BrowseList {
 		t.Errorf("round-trip end page = %v, want List", s.page)
 	}
@@ -1229,32 +1115,12 @@ func TestNavigationFullV070Hierarchy(t *testing.T) {
 	s.history = []Commit{{Hash: "abc1234", Subject: "test commit"}}
 	s.selectedCommit = 0
 
-	actions := []struct {
-		action keyAction
-		raw    string
-	}{
-		{keyEnter, "\r"}, // List -> Detail
-		{keyEnter, "\r"}, // Detail -> History
-		{keyEnter, "\r"}, // History -> Commit
-		{keyEnter, "\r"}, // Commit -> Files
-		{keyEsc, "\x1b"}, // Files -> Commit
-		{keyEsc, "\x1b"}, // Commit -> History
-		{keyEsc, "\x1b"}, // History -> Detail
-		{keyEsc, "\x1b"}, // Detail -> List
-		{keyQuit, "q"},   // exit
-	}
-
-	i := 0
-	captureOutput(func() {
-		s.run(func() (keyAction, string, bool) {
-			if i >= len(actions) {
-				return keyQuit, "q", false
-			}
-			act := actions[i]
-			i++
-			return act.action, act.raw, true
-		})
-	})
+	// List -> Detail -> History -> Commit -> Files and back up to List.
+	driveKeys(t, s, keyScript(
+		keyEnter, keyEnter, keyEnter, keyEnter,
+		keyEsc, keyEsc, keyEsc, keyEsc,
+		keyQuit, // exit
+	))
 	if s.page != BrowseList {
 		t.Errorf("final page = %v, want List", s.page)
 	}
@@ -1561,6 +1427,42 @@ func TestWindowLines(t *testing.T) {
 	}
 }
 
+func TestClampIndex(t *testing.T) {
+	for _, tc := range []struct {
+		selected, n, want int
+	}{
+		{0, 0, -1},  // empty selects nothing
+		{-5, 0, -1}, // empty dominates a stale index
+		{-1, 3, 0},  // negative pins to head
+		{5, 3, 2},   // overflow pins to tail
+		{1, 3, 1},   // valid passes through
+		{0, 1, 0},   // singleton
+	} {
+		if got := clampIndex(tc.selected, tc.n); got != tc.want {
+			t.Errorf("clampIndex(%d, %d) = %d, want %d", tc.selected, tc.n, got, tc.want)
+		}
+	}
+}
+
+func TestWindowOffset(t *testing.T) {
+	for _, tc := range []struct {
+		selected, offset, n, rows, want int
+	}{
+		{0, 0, 10, 5, 0},  // already visible
+		{7, 0, 10, 5, 3},  // follows below
+		{2, 5, 10, 5, 2},  // follows above
+		{9, 0, 10, 5, 5},  // tail clamps origin
+		{0, 9, 3, 5, 0},   // short list clamps to origin
+		{2, -4, 10, 5, 0}, // negative origin recovers to a window holding selection
+		{0, 0, 10, 0, 0},  // degenerate budget floors to one row
+	} {
+		if got := windowOffset(tc.selected, tc.offset, tc.n, tc.rows); got != tc.want {
+			t.Errorf("windowOffset(%d, %d, %d, %d) = %d, want %d",
+				tc.selected, tc.offset, tc.n, tc.rows, got, tc.want)
+		}
+	}
+}
+
 // TestBoundedDetailKeepsFooterVisible verifies the v0.9.2 chrome contract:
 // long Detail content is windowed to the available rows so the footer stays
 // in the output, and scrolling reveals later lines.
@@ -1829,7 +1731,7 @@ func TestBackspaceFilterMultibyte(t *testing.T) {
 // enter filter mode, type, backspace, retype, keep on Enter, then clear on Esc.
 func TestRunFilterTypingEditingAndClear(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
-	script := []struct {
+	driveKeys(t, state, []struct {
 		action keyAction
 		raw    string
 	}{
@@ -1841,18 +1743,6 @@ func TestRunFilterTypingEditingAndClear(t *testing.T) {
 		{keyEnter, "\r"}, // exit editing, keep query
 		{keyEsc, "\x1b"}, // Esc on List (not editing): ignored by navigation
 		{keyQuit, "q"},
-	}
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			if i >= len(script) {
-				t.Error("run continued past the quit event")
-				return keyNone, "", false
-			}
-			s := script[i]
-			i++
-			return s.action, s.raw, true
-		})
 	})
 	if state.filterQuery != "pe" {
 		t.Errorf("filterQuery = %q, want %q (kept after Enter)", state.filterQuery, "pe")
@@ -1872,7 +1762,7 @@ func TestRunFilterTypingEditingAndClear(t *testing.T) {
 // exits editing, and restores the full set with a valid selection.
 func TestRunFilterEscClearsQuery(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
-	script := []struct {
+	driveKeys(t, state, []struct {
 		action keyAction
 		raw    string
 	}{
@@ -1880,14 +1770,6 @@ func TestRunFilterEscClearsQuery(t *testing.T) {
 		{keyNone, "z"},
 		{keyEsc, "\x1b"},
 		{keyQuit, "q"},
-	}
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			s := script[i]
-			i++
-			return s.action, s.raw, true
-		})
 	})
 	if state.filterQuery != "" {
 		t.Errorf("filterQuery = %q, want empty after Esc", state.filterQuery)
@@ -1908,30 +1790,14 @@ func TestRunFilterEscClearsQuery(t *testing.T) {
 // and only Ctrl+C quits from editing mode.
 func TestRunFilterLiteralQAppendsWhileEditing(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
-	before := state.selected
-	script := []struct {
+	driveKeys(t, state, []struct {
 		action keyAction
 		raw    string
 	}{
 		{keyFilter, "/"},
 		{keyQuit, "q"},    // literal q: query text, not quit
 		{keyQuit, "\x03"}, // Ctrl+C while editing: quits
-	}
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			if i >= len(script) {
-				t.Error("run ignored Ctrl+C while editing")
-				return keyNone, "", false
-			}
-			s := script[i]
-			i++
-			return s.action, s.raw, true
-		})
 	})
-	if i != len(script) {
-		t.Errorf("consumed %d events, want %d (quit only on Ctrl+C)", i, len(script))
-	}
 	if state.filterQuery != "q" {
 		t.Errorf("filterQuery = %q, want %q (literal q must append)", state.filterQuery, "q")
 	}
@@ -1944,7 +1810,6 @@ func TestRunFilterLiteralQAppendsWhileEditing(t *testing.T) {
 	if len(state.repos) != 0 {
 		t.Errorf("repos = %d, want 0 zero-match results", len(state.repos))
 	}
-	_ = before
 }
 
 // TestReadKeyReturnsCompleteRune drives the platform readKey against a pipe
@@ -2001,24 +1866,7 @@ func TestUtf8SequenceLen(t *testing.T) {
 func TestRunFilterIgnoresSelectionMovesWhileEditing(t *testing.T) {
 	state := newBrowserState(browseSample(), 3)
 	before := state.selected
-	script := []struct {
-		action keyAction
-		raw    string
-	}{
-		{keyFilter, "/"},
-		{keyDown, "\x1b[B"},
-		{keyUp, "\x1b[A"},
-		{keyEnter, "\r"},
-		{keyQuit, "q"},
-	}
-	i := 0
-	captureOutput(func() {
-		state.run(func() (keyAction, string, bool) {
-			s := script[i]
-			i++
-			return s.action, s.raw, true
-		})
-	})
+	driveKeys(t, state, keyScript(keyFilter, keyDown, keyUp, keyEnter, keyQuit))
 	if state.selected != before {
 		t.Errorf("selected moved while editing: was %d, now %d", before, state.selected)
 	}

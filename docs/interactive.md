@@ -19,7 +19,7 @@ Changed Files (FILES)
 ```
 
 - **Enter**: Advance to child surface.
-- **`←` / `Esc`**: Return to parent surface.
+- **`←` / `Esc`**: Return to parent surface (no-op on List; quit with `q`).
 - **`q` / `Ctrl+C`**: Quit from any level.
 - **`↑` / `↓`**: Move selection on List and History; scroll Detail, Commit Detail, and Changed Files content.
 - **`H` / `L` / `Shift+←` / `Shift+→`**: Scroll horizontally across wide viewports.
@@ -71,4 +71,4 @@ Horizontal scrolling (`H`/`L`) is deliberately undisclosed in the footers: at na
 
 ## Non-TTY Behavior
 
-When stdin is not a terminal (e.g. `keen -i < input`), `keen -i` automatically degrades to a one-shot static list render with zero terminal control sequences or escape codes, preserving full script and CI compatibility.
+When stdin is not a terminal (e.g. `keen -i < input`), `keen -i` automatically degrades to a one-shot static list render with zero terminal control sequences or escape codes, preserving full script and CI compatibility. The one-shot render carries no `===KEEN===` banner.

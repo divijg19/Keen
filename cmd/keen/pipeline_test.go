@@ -17,9 +17,13 @@ func gitCommand(t *testing.T, dir string, args ...string) string {
 }
 
 // gitCommandEnv runs git in dir with extra environment (KEY=VALUE pairs),
-// failing the test on error.
+// failing the test on error. Tests skip cleanly where git is unavailable,
+// matching the internal Git-backed suites.
 func gitCommandEnv(t *testing.T, dir string, env []string, args ...string) string {
 	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
 	cmdArgs := append([]string{"-C", dir}, args...)
 	cmd := exec.Command("git", cmdArgs...)
 	cmd.Env = append(os.Environ(), env...)
@@ -112,7 +116,8 @@ func hasControlSequence(s string) bool {
 
 // TestKeenCLIHelper is the re-exec entry point shared by all CLI-level tests:
 // a helper subprocess that installs the requested arguments and runs the real
-// main(), then exits. Output is captured by the parent as the binary's report.
+// main(), which exits with the production status. Output is captured by the
+// parent as the binary's report.
 func TestKeenCLIHelper(t *testing.T) {
 	if os.Getenv("KEEN_CLI_HELPER") != "1" {
 		t.Skip("helper entry point")
@@ -123,7 +128,6 @@ func TestKeenCLIHelper(t *testing.T) {
 	}
 	os.Args = append([]string{"keen"}, args...)
 	main()
-	os.Exit(0)
 }
 
 // TestMainPipelineE2E drives the real CLI end to end against freshly built Git
@@ -184,6 +188,30 @@ func TestMainPipelineE2E(t *testing.T) {
 	}
 }
 
+// TestEnrichFailureExcludesRepo drives the real CLI against a workspace
+// holding one healthy repository and one directory that only looks like a
+// repository (a bare .git directory git cannot read). Enrichment of the
+// broken entry fails, so it must be excluded from the report — with the
+// stderr diagnostic preserved — instead of surfacing as a plausible row,
+// while the healthy repository is unaffected.
+func TestEnrichFailureExcludesRepo(t *testing.T) {
+	root := t.TempDir()
+	good := initRepo(t, root, "good-repo")
+	commitFile(t, good, "a.txt", "a\n", "initial", "")
+	broken := filepath.Join(root, "broken-repo")
+	if err := os.MkdirAll(filepath.Join(broken, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runKeen(t, root, nil)
+	if !strings.Contains(out, "good-repo") {
+		t.Errorf("healthy repository missing from output:\n%s", out)
+	}
+	if strings.Contains(out, "broken-repo") {
+		t.Errorf("enrich-failed repository must be excluded, got:\n%s", out)
+	}
+}
+
 // TestNonTTYInteractiveFilterMatrix runs the real binary with -i under a
 // pipe (non-terminal stdin) with stdout captured as a pipe, across every
 // selection flag, and asserts the portability contract (no terminal
@@ -198,7 +226,7 @@ func TestNonTTYInteractiveFilterMatrix(t *testing.T) {
 	}
 
 	cases := []tc{
-		{name: "interactive", args: []string{"-i"}, want: []string{"fresh", "stale"}},
+		{name: "interactive", args: []string{"-i"}, want: []string{"fresh", "stale"}, not: []string{"===KEEN==="}},
 		{name: "clean only", args: []string{"-i", "--clean"}, want: []string{"fresh"}, not: []string{"stale"}},
 		{name: "dirty only", args: []string{"-i", "--dirty"}, want: []string{"stale"}, not: []string{"fresh"}},
 		{name: "recent only", args: []string{"-i", "--recent", "7d"}, want: []string{"fresh"}, not: []string{"stale"}},
@@ -211,7 +239,6 @@ func TestNonTTYInteractiveFilterMatrix(t *testing.T) {
 		}
 		os.Args = append([]string{"keen"}, cases[idx].args...)
 		main()
-		os.Exit(0)
 	}
 
 	root := t.TempDir()

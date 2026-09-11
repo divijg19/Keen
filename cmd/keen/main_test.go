@@ -4,11 +4,67 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/divijg19/Keen/internal/keen"
 )
+
+// TestRunExitCodes pins the process contract: flag errors fail non-zero,
+// help and version succeed, all without touching the filesystem.
+func TestRunExitCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"flag error", []string{"--nope"}, 1},
+		{"help", []string{"-h"}, 0},
+		{"version", []string{"-version"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := run(tc.args); got != tc.want {
+				t.Errorf("run(%v) = %d, want %d", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunDeletedWorkingDirExitCode pins that an unusable invocation
+// directory is a fatal failure: Getwd fails, so run reports non-zero
+// before discovery or presentation runs.
+func TestRunDeletedWorkingDirExitCode(t *testing.T) {
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Skipf("working directory already unusable: %v", err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(prev); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	}()
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(nil); got == 0 {
+		t.Error("run in a deleted working directory must fail non-zero")
+	}
+}
+
+// TestExecuteNonexistentRootExitCode pins that failed traversal is fatal:
+// Discover reports the error and execute returns non-zero instead of an
+// empty successful report.
+func TestExecuteNonexistentRootExitCode(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-dir")
+	if got := execute(missing, nil); got == 0 {
+		t.Errorf("execute(%q) must fail non-zero", missing)
+	}
+}
 
 func TestParseArgsModeSelection(t *testing.T) {
 	cases := []struct {
@@ -205,7 +261,6 @@ func TestVersionNoRepoWork(t *testing.T) {
 	if os.Getenv("KEEN_VERSION_HELPER") == "1" {
 		os.Args = []string{"keen", "-version"}
 		main()
-		os.Exit(0)
 	}
 
 	exe, err := os.Executable()

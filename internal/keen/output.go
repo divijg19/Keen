@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+const (
+	// noSyncMark flags unavailable synchronization facts (no upstream): an
+	// en dash pairs with the arrow markers without ever implying a number.
+	noSyncMark = "–"
+	// noValueMark flags absent standalone values (no upstream path, no
+	// commit facts): an em dash reads as an explicit blank, never zero.
+	// It is deliberately distinct from noSyncMark, which belongs to the
+	// numeric divergence columns.
+	noValueMark = "—"
+)
+
 // branchLabel labels a repository's branch: a detached HEAD shows "detached"
 // rather than a fabricated branch name.
 func branchLabel(repo Repository) string {
@@ -16,10 +27,10 @@ func branchLabel(repo Repository) string {
 }
 
 // upstreamLabel labels a repository's upstream; an absent upstream is shown as
-// an explicit em-dash rather than being folded into another column.
+// an explicit marker rather than being folded into another column.
 func upstreamLabel(repo Repository) string {
 	if repo.Upstream == "" {
-		return "—"
+		return noValueMark
 	}
 	return repo.Upstream
 }
@@ -154,7 +165,7 @@ func richWideLayout(width int) []richColumn {
 
 // richTightLayout is the full eight-column table using tightened floors; it
 // is the starting point for width adaptation below the wide threshold
-// (measured requirement: 51 cells + 7 separators = 58 columns).
+// (measured requirement: 57 cells + 7 separators = 64 columns).
 func richTightLayout() []richColumn {
 	return []richColumn{
 		{"NAME", tightNameFloor, false, true},
@@ -233,21 +244,21 @@ func richDistributeSlack(cols []richColumn, width int) {
 func richValues(r Repository) []string {
 	var ahead, behind string
 	if r.Upstream == "" {
-		ahead, behind = "–", "–"
+		ahead, behind = noSyncMark, noSyncMark
 	} else {
 		ahead, behind = strconv.Itoa(r.Ahead), strconv.Itoa(r.Behind)
 	}
 	hash := shortHash(r.LastCommitHash)
 	if hash == "" {
-		hash = "—"
+		hash = noValueMark
 	}
 	subject := r.LastCommitSubject
 	if r.LastCommitHash == "" {
-		subject = "—"
+		subject = noValueMark
 	}
 	time := r.LastCommitTime
 	if time == "" {
-		time = "—"
+		time = noValueMark
 	}
 	return []string{
 		r.Name,
@@ -334,7 +345,7 @@ func branchUpstreamLabel(repo Repository) string {
 // mistaken for a synchronized state.
 func aheadBehindLabel(repo Repository) string {
 	if repo.Upstream == "" {
-		return "↑– ↓–"
+		return fmt.Sprintf("↑%s ↓%s", noSyncMark, noSyncMark)
 	}
 	return fmt.Sprintf("↑%d ↓%d", repo.Ahead, repo.Behind)
 }

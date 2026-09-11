@@ -21,6 +21,8 @@ go install github.com/divijg19/Keen/cmd/keen@latest
 | `-version` | Print release version and exit. |
 | `--help` | Print usage. |
 
+All flags accept single- or double-dash forms (`-version`/`--version`, `-help`/`--help`, `-r`/`--r`).
+
 ## Presentation Modes
 
 ```text
@@ -30,6 +32,12 @@ keen -i     interactive repository investigation
 ```
 
 Selecting a mode never changes which repositories are shown. `--clean`, `--dirty`, and `--recent` control selection; presentation modes control rendering. All modes share the same filtered pipeline: `Discover → Enrich → Sort → Filter → ResolveDisplayIdentities → Present`.
+
+Repositories Keen cannot inspect are diagnosed on stderr and excluded from every mode; counts and summaries describe the reported set.
+
+## Exit Status
+
+Exit `0` on success, including `--help` and `-version`. Exit `1` on flag errors and fatal runtime failures (unusable working directory, failed traversal).
 
 `--compact` is specific to the canonical renderer. Combining `--compact` with `-r` or `-i` produces a usage error rather than being silently ignored.
 
